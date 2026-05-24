@@ -1,8 +1,8 @@
-from chunkers import FixedSizeChunker, RecursiveChunker, SemanticChunker
+from src.ingestion.chunkers import FixedSizeChunker, RecursiveChunker, SemanticChunker
 
 class ChunkerFactory:
-    """Swap chunking strategies without changing any ohter code.
-    Built an evaluation pipeline. Test multiple strategies, and pick the one with the best retrieval metrics. This factory makes that experimentation possible.
+    """Swap chunking strategies without changing any other code.
+    Build an evaluation pipeline. Test multiple strategies, and pick the one with the best retrieval metrics. This factory makes that experimentation possible.
     """
 
     strategies = {
