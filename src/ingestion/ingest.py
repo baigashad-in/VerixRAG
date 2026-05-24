@@ -5,10 +5,11 @@ Document -> Chunks -> Embeddings -> Vector Store
 This script is run when new documents are added to the knowledge base. 
 """
 
-from document_loader import DocumentLoader
-from chunkers import EmbeddingService
-from vector_store import VectorStore
-from chunker_factory import ChunkerFactory
+from src.ingestion.document_loader import DocumentLoader, Document
+from src.ingestion.chunkers import FixedSizeChunker, RecursiveChunker, SemanticChunker
+from src.ingestion.embedding_service import EmbeddingService
+from src.storage.vector_store import VectorStore
+from src.ingestion.chunker_factory import ChunkerFactory
 
 class IngestionPipeline:
     """Orchestrates the full ingestion flow.
