@@ -6,7 +6,7 @@ Without ground truth, we're guessing. With it, you can
 measure exactly where your system fails.
 
 HOW TO BUILD THIS IN PRACTICE: 
-1. Write 20-50 questions the knowdlge base should answer
+1. Write 20-50 questions the knowledge base should answer
 2. For each question, find the actual chunks that contain the answer
 3. Write the ideal answer based on those chunks
 4. Include edge cases: multi-hop questions, negations,
@@ -75,41 +75,41 @@ class EvalDataset:
         print(f"Loaded {len(self.examples)} eval examples")
         return self
     
-    # Example dataset for the policies document:
-    def build_sample_dataset() -> EvalDataset:
-        dataset = EvalDataset()
+# Example dataset for the policies document:
+def build_sample_dataset() -> EvalDataset:
+    dataset = EvalDataset()
 
-        dataset.add(
-            question = "What is the refund policy for purchases over 30 days old?",
-            ground_truth = "After 30 days, store credit equal to the purchase price is offered. Store credit never expires.",
-            relevant_chunk_ids = [2, 3],
-            difficulty = "easy",
-            category = "refund",
-        )
+    dataset.add(
+        question = "What is the refund policy for purchases over 30 days old?",
+        ground_truth = "After 30 days, store credit equal to the purchase price is offered. Store credit never expires.",
+        relevant_chunk_ids = [2, 3],
+        difficulty = "easy",
+        category = "refund",
+    )
 
-        dataset.add(
-            question = "How much does express shipping cost and how fast is it?",
-            ground_truth = "Express shipping costs $15 and delivers within 2 business days.",
-            relevant_chunk_ids = [5],
-            difficulty = "easy",
-            category = "shipping",
-        )
+    dataset.add(
+        question = "How much does express shipping cost and how fast is it?",
+        ground_truth = "Express shipping costs $15 and delivers within 2 business days.",
+        relevant_chunk_ids = [5],
+        difficulty = "easy",
+        category = "shipping",
+    )
 
-        dataset.add(
-            question = "If I delete my account, what happens to my store credit?",
-            ground_truth = "Store credit is forfeited when you delete your account.",
-            relevant_chunk_ids = [3, 7],
-            difficulty = "hard",
-            category = "account",
-            reasoning = "Requires connecting info from two different sections",
-        )
+    dataset.add(
+        question = "If I delete my account, what happens to my store credit?",
+        ground_truth = "Store credit is forfeited when you delete your account.",
+        relevant_chunk_ids = [3, 7],
+        difficulty = "hard",
+        category = "account",
+        reasoning = "Requires connecting info from two different sections",
+    )
 
-        dataset.add(
-            question = "What is the weather in Tokyo?",
-            ground_truth = "NOT_ANSWERABLE",
-            relevant_chunk_ids = [],
-            difficulty = "medium",
-            category = "out-of-scope",
-        )
+    dataset.add(
+        question = "What is the weather in Tokyo?",
+        ground_truth = "NOT_ANSWERABLE",
+        relevant_chunk_ids = [],
+        difficulty = "easy",
+        category = "out_of_scope",
+    )
 
-        return dataset
+    return dataset
