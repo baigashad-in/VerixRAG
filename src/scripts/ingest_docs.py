@@ -20,7 +20,7 @@ from src.ingestion.ingest import IngestionPipeline
 
 def main():
     parser = argparse.ArgumentParser(description="Ingest documents into VerixRAG")
-    parser.add_argument("--directory", default="./docs", help="Path to document folder")
+    parser.add_argument("--directory", default="./documents", help="Path to documents folder")
     parser.add_argument("--strategy", default="recursive", choices=["fixed", "recursive", "semantic"])
     parser.add_argument("--chunk-size", type=int, default=512)
     args = parser.parse_args()

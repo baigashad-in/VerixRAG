@@ -16,19 +16,17 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from src.ingestion.ingest import IngestionPipeline
-from src.ingestion.embedding_service import EmbeddingService
 from src.storage.vector_store import VectorStore
 from src.retrieval.sparse_retrieval import BM25Retriever
-from src.retrieval.hybrid_retrieval import HybridRetriever
 from src.retrieval.reranker import CrossEncoderReranker
 from src.retrieval.retrieval_engine import RetrievalEngine
 from src.query.query_transformer import QueryTransformer
-from src.query.enhanced_retrieval import EnhancedRetriever, QueryStrategy
+from src.query.enhanced_retrieval import EnhancedRetriever
 from src.generation.generator import RAGGenerator
 from src.generation.hallucination_check import HallucinationDetector
 from src.pipeline import RAGPipeline
 from src.evaluation.metrics import RAGMetrics
-from src.evaluation.eval_dataset import EvalDataset, build_sample_dataset
+from src.evaluation.eval_dataset import build_sample_dataset
 from src.evaluation.ragas_eval import EvaluationRunner
 from src.evaluation.experiment_tracker import ExperimentTracker
 
