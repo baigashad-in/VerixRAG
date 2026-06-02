@@ -30,7 +30,7 @@ class QueryTransformer:
     etc. One function call, swap providers with a string change.
     """
 
-    def __init__(self, model: str = "anthropic/claude-sonnet-4-20250514"):
+    def __init__(self, model: str = "gemini/gemini-2.0-flash"):
         self.model = model
 
     def multi_query(self, query: str, n: int = 3) -> list[str]:

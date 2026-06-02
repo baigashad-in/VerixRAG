@@ -49,7 +49,7 @@ class RAGGenerator:
        structured metadata
     """
     
-    def __init__(self, model: str = "anthropic/claude-sonnet-4-20250514"):
+    def __init__(self, model: str = "groq/llama-3.3-70b-versatile"):
         self.model = model
     
     def _build_context_block(self, results: list) -> tuple[str, list]:

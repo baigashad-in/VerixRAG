@@ -18,7 +18,7 @@ class RAGMetrics:
     Higher is better for all metrics.
     """
 
-    def __init__(self, model: str = "groq/llama-3.3-70b-versatile"):
+    def __init__(self, model: str = "gemini/gemini-2.0-flash"):
         self.model = model
         self.request_delay = 2 # seconds between LLM calls (rate limits)
 
