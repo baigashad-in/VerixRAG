@@ -132,7 +132,7 @@ Return ONLY JSON: {{"in_scope": true/false, "reason": "brief explanation"}}"""
             temperature = 0.0,
         )
 
-        raw = response.choices[0].messages.content.strip()
+        raw = response.choices[0].message.content.strip()
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0]
 

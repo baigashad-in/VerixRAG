@@ -41,8 +41,8 @@ class RAGPipeline:
         )
 
         hallucination_check = None
-        if check_hallucination and self.detector:
-            hallucination_check = self.detector.check_citation_coverage(
+        if check_hallucination and self.hallucination_detector:
+            hallucination_check = self.hallucination_detector.check_citation_coverage(
                 response.answer,
                 num_sources = len(results),
             )
