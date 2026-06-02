@@ -14,8 +14,7 @@ migrations.
 
 import json
 import re
-import psycopg2
-from psycopg2.extras import execute_values
+import psycopg
 
 class VectorStore:
     ALLOWED_KEYS = {
@@ -35,7 +34,7 @@ class VectorStore:
             BGE-M3 = 1024
             OpenAI text-embedding-3-small = 1536
         """
-        self.conn = psycopg2.connect(connection_string)
+        self.conn = psycopg.connect(connection_string)
         self.dimension = embedding_dimension
         self._initialize_db()
 
@@ -51,6 +50,9 @@ class VectorStore:
         accurate but more memory and slower inserts(more connections to build))
         ef_construction = 64: build-time thoroughness (higher = better index but slower to build)
         """
+        if not isinstance(self.dimension, int) or not (1 <= self.dimension <= 4096):
+            raise ValueError(f"Invalid embedding dimension: {self.dimension}")
+
         with self.conn.cursor() as cur:
             # Enable pgvector extension
             cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
@@ -81,28 +83,29 @@ class VectorStore:
             """)
             self.conn.commit()
         print("Vector Store initialized")
+
+    def _validate_metadata(self, metadata: dict) -> str:
+        """Sanitize metadata before storing."""
+        clean = {}
+        for key, value in metadata.items():
+            if not re.match(r'^[a-z_][a-z0-9_]*$', key):
+                continue
+            clean[key] = str(value)[:1000]
+        return json.dumps(clean)
     
     def insert_chunks(self, embedded_chunks:list) -> int:
         """Bulk insert embedded chunks into the store.
-        Uses execute_values for batch insertion - much faster
-            than individual INSERTS for large document sets.
+        Inserts individually within a single transaction —
+        the commit at the end makes it efficient.
         """
         with self.conn.cursor() as cur:
-            data = [
-                (
-                    chunk.content,
-                    chunk.embedding, # pgvector handles list -> vector
-                    json.dumps(chunk.metadata)
+            for chunk in embedded_chunks:
+                if len(chunk.content) > self.MAX_CHUNK_CONTENT:
+                    raise ValueError(f"Chunk content exceeds {self.MAX_CHUNK_CONTENT} chars")
+                cur.execute(
+                    "INSERT INTO chunks (content, embedding, metadata) VALUES (%s, %s::vector, %s::jsonb)",
+                    (chunk.content, str(chunk.embedding), self._validate_metadata(chunk.metadata))
                 )
-                for chunk in embedded_chunks
-            ]
-
-            execute_values(
-                cur,
-                """INSERT INTO chunks (content, embedding, metadata) VALUES %s""",
-                data,
-                template = "(%s, %s::vector, %s::jsonb)",
-            )
             self.conn.commit()
 
         print(f"Inserted {len(embedded_chunks)} chunks")
@@ -123,11 +126,13 @@ class VectorStore:
         Example: search only in the refund policy doc:
             metadata_filter = {"filename": "refund_policy.md"}
         """
+        if not isinstance(top_k, int) or not (1 <= top_k <= 100):
+            raise ValueError("top_k must be between 1 and 100")
 
         with self.conn.cursor() as cur:
             # Build the query with optional metadata filter
             where_clause = ""
-            params = [query_embedding, top_k]
+            params = [str(query_embedding), top_k]
 
             if metadata_filter:
 
@@ -151,8 +156,8 @@ class VectorStore:
                 {where_clause}
                 ORDER BY embedding <=> %s::vector 
                 LIMIT %s;""",
-                [query_embedding] + params[1:-1] +
-                [query_embedding, top_k])
+                [str(query_embedding)] + params[1:-1] +
+                [str(query_embedding), top_k])
             
             results = []
             for row in cur.fetchall():
@@ -180,6 +185,9 @@ class VectorStore:
         you delete old chunks and re-ingest. Without this, you'd
         have duplicate/stale chunks polluting your results.
         """
+        if not re.match(r'^[\w\-. ]+$', source):
+            raise ValueError(f"Invalid source filename: {source}")
+        
         with self.conn.cursor() as cur:
             cur.execute(
                 "DELETE FROM chunks WHERE metadata->>'source' = %s", (source,)
@@ -189,3 +197,12 @@ class VectorStore:
         print(f"Deleted {deleted} chunks from {source}")
         return deleted
         
+    def close(self):
+        if self.conn and not self.conn.closed:
+            self.conn.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()

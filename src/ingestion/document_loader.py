@@ -29,7 +29,7 @@ class DocumentLoader:
 
         # Attach metadata - this travels with every chunk
         metadata = {
-            "source": str(path.absolute()),
+            "source": path.name,
             "filename": path.name,
             "file_type": path.suffix,
             "char_count": len(content),
