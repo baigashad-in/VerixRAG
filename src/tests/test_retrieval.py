@@ -13,13 +13,16 @@ class TestBM25Retriever:
             {"id": 2, "content": "Express shipping costs fifteen dollars", "metadata": {}},
             {"id": 3, "content": "Account deletion removes all personal data", "metadata": {}},
             {"id": 4, "content":"Store credit never expires after refund", "metadata": {}},
+            {"id": 5, "content": "Password must contain eight characters minimum", "metadata": {}},
+            {"id": 6, "content": "Two factor authentication enhances security", "metadata": {}},
+            {"id": 7, "content": "Order tracking is available for all shipments", "metadata": {}},
         ]
         retriever.index(chunks)
         return retriever
     
     def test_index_builds(self, indexed_retriever):
         assert indexed_retriever.bm25 is not None
-        assert len(indexed_retriever.documents) == 4
+        assert len(indexed_retriever.documents) == 7
 
     def test_search_returns_results(self, indexed_retriever):
         results = indexed_retriever.search("refund policy", top_k=2)
