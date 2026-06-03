@@ -23,7 +23,7 @@ class VectorStore:
     }
 
     # Content size limit per chunk — prevents storing huge blobs
-    MAX_CHUNK_CONTENT = 100_000 # 100k chars - adjust based on your needs and embedding model limits
+    MAX_CHUNK_CONTENT = 100_000 # 100k chars - adjust based on needs and embedding model limits
 
     def __init__(self, connection_string: str, embedding_dimension: int =384):
         """
@@ -50,6 +50,7 @@ class VectorStore:
         accurate but more memory and slower inserts(more connections to build))
         ef_construction = 64: build-time thoroughness (higher = better index but slower to build)
         """
+        # Parameterize dimension safely
         if not isinstance(self.dimension, int) or not (1 <= self.dimension <= 4096):
             raise ValueError(f"Invalid embedding dimension: {self.dimension}")
 
@@ -86,10 +87,12 @@ class VectorStore:
 
     def _validate_metadata(self, metadata: dict) -> str:
         """Sanitize metadata before storing."""
+        # Remove any keys that could be problematic
         clean = {}
         for key, value in metadata.items():
             if not re.match(r'^[a-z_][a-z0-9_]*$', key):
-                continue
+                continue # silently skip invalid keys
+            # Values: convert to string, limit length
             clean[key] = str(value)[:1000]
         return json.dumps(clean)
     
@@ -100,6 +103,7 @@ class VectorStore:
         """
         with self.conn.cursor() as cur:
             for chunk in embedded_chunks:
+                # Validate content size
                 if len(chunk.content) > self.MAX_CHUNK_CONTENT:
                     raise ValueError(f"Chunk content exceeds {self.MAX_CHUNK_CONTENT} chars")
                 cur.execute(
@@ -126,6 +130,7 @@ class VectorStore:
         Example: search only in the refund policy doc:
             metadata_filter = {"filename": "refund_policy.md"}
         """
+        # Validate top_k to prevent absurd queries
         if not isinstance(top_k, int) or not (1 <= top_k <= 100):
             raise ValueError("top_k must be between 1 and 100")
 
@@ -182,9 +187,10 @@ class VectorStore:
         """Delete all chunks from a specific source file.
         
         Essential for re-ingestion when a document is updated,
-        you delete old chunks and re-ingest. Without this, you'd
-        have duplicate/stale chunks polluting your results.
+        delete old chunks and re-ingest. Without this, we would
+        have duplicate/stale chunks polluting results.
         """
+        # Prevent injection via source — only allow filename patterns
         if not re.match(r'^[\w\-. ]+$', source):
             raise ValueError(f"Invalid source filename: {source}")
         
@@ -198,6 +204,7 @@ class VectorStore:
         return deleted
         
     def close(self):
+        """Always close connections — prevent connection leaks."""
         if self.conn and not self.conn.closed:
             self.conn.close()
 

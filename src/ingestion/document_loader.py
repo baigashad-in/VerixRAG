@@ -17,12 +17,32 @@ class DocumentLoader:
     
     This supports PDF, DOCX, HTML, Markdown, etc. in the porduction.
     """
+    def __init__(self, allowed_directory: str = "./documents"):
+        self.allowed_dir = Path(allowed_directory).resolve()
+
     def load_file(self, file_path: str) -> Document:
         """Loads a file and returns a Document object."""
         path = Path(file_path)
 
+        # Prevent path traversal — file must be inside allowed directory
+        if not str(path).startswith(str(self.allowed_dir)):
+            raise PermissionError(
+                f"Access denied: {file_path} is outside "
+                f"allowed directory {self.allowed_dir}"
+            )
+
         if not path.exists():
             raise FileNotFoundError(f"No file at {file_path}")
+
+
+        # Limit file size to prevent memory exhaustion
+        MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
+        file_size = path.stat().st_size
+        if file_size > MAX_FILE_SIZE:
+            raise ValueError(
+                f"File too large: {file_size} bytes "
+                f"(max {MAX_FILE_SIZE})"
+            )
         
         # Read the raw text
         content = path.read_text(encoding="utf-8")

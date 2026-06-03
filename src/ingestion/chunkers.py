@@ -143,6 +143,7 @@ class RecursiveChunker:
             if text.strip() # skip empty chunks
         ]
     
+_SENTENCE_SPLIT = re.compile(r'(?<=[.!?])\s+')  # compile once
 
 class SemanticChunker:
     """Split text where the meaning changes, not at arbitrary positions.
@@ -166,11 +167,19 @@ class SemanticChunker:
         # We'll set this up when we build the embedding layer
         self.similarity_threshold = similarity_threshold
 
+    MAX_INPUT_LENGTH = 5_000_000  # 5M chars max
+
     def _split_into_sentences(self, text: str) -> list[str]:
         """Simple sentence splitting.
         In production, we use spaCy or nltk for better accuracy."""
+
+        if len(text) > self.MAX_INPUT_LENGTH:
+            raise ValueError(
+                f"Text too long for semantic chunking: "
+                f"{len(text)} chars (max {self.MAX_INPUT_LENGTH})"
+            )
         
-        sentences = re.split(r'(?<=[.!?])\s+', text)
+        sentences = _SENTENCE_SPLIT.split(text)
         return [s.strip() for s in sentences if s.strip()]
 
     def _cosine_similarity(self, vec_a, vec_b) -> float:
