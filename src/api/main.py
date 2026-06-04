@@ -11,10 +11,47 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
+from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import Response
+from src.api.auth import verify_api_key
+from fastapi import Security
+
 load_dotenv()
 
 # Shared instances - initialized once at startup
 app_state = {}
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Add OWASP-recommended security headers to every response."""
+    async def dispatch(self, request: Request, call_next):
+        response: Response = await call_next(request)
+        
+        # Prevent clickjacking
+        response.headers["X-Frame-Options"] = "DENY"
+
+        # Prevent MIME type sniffing
+        response.headers["X-Content-Type-Options"] = "nosniff"
+
+        # XSS protection (legacy browsers)
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+
+        # Content Security Policy
+        response.headers["Content-Security-Policy"] = "default-src 'self'"
+
+        # Prevent referrer leakage
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+
+        # HSTS - force HTTPS (enable when you have TLS)
+        # response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+
+        # Prevent caching of sensitive responses
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Pragma"] = "no-cache"
+
+        return response
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -105,8 +142,15 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins = ["http://localhost:3000"], # React frontend
-    allow_methods = ["*"],
-    allow_headers = ["*"],
+    allow_methods = ["GET", "POST"],
+    allow_headers = ["Content-Type", "X-API-Key"],
+)
+
+app.add_middleware(SecurityHeadersMiddleware)
+
+app.add_middleware(
+    TrustedHostMiddleware,
+    allowed_hosts = ["localhost", "127.0.0.1"]
 )
 
 # -- Routes --
@@ -117,7 +161,7 @@ async def health():
 
 
 @app.post("/api/chat")
-async def chat(request: dict):
+async def chat(request: dict, api_key: str = Security(verify_api_key)):
     query = request.get("query", "").strip()
 
     if not query:
@@ -131,7 +175,7 @@ async def chat(request: dict):
     return result
 
 @app.post("/api/ingest")
-async def ingest(request: dict):
+async def ingest(request: dict, api_key: str = Security(verify_api_key)):
     """Ingest documents into the knowledge base."""
     directory = request.get("directory", "./documents")
     strategy = request.get("chunk_strategy", "recursive")
@@ -154,3 +198,26 @@ async def ingest(request: dict):
         bm25.load_from_vector_store(app_state["store"])
 
     return {"status": "ok", "files_ingested": len(results), "details": results}
+
+@app.post("/api/evaluate")
+async def evaluate(request: dict, api_key: str = Security(verify_api_key)):
+    """Admin endpoint - run RAGAS evaluation."""
+    from src.evaluation.eval_dataset import EvalDataset, build_sample_dataset
+    from src.evaluation.metrics import RAGMetrics
+    from src.evaluation.ragas_eval import EvaluationRunner
+
+    label = request.get("label", "default")
+    dataset_path = request.get("dataset", None)
+
+    if dataset_path:
+        dataset = EvalDataset().load(dataset_path)
+    else:
+        dataset = build_sample_dataset()
+
+    pipeline = app_state["pipeline"].rag # unwrap from GuradedRAGPipeline
+    metrics = RAGMetrics()
+    runner = EvaluationRunner(pipeline, metrics, dataset)
+    report = runner.run(config_label = label)
+    runner.save_report(report)
+
+    return report
