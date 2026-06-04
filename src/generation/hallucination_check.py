@@ -6,7 +6,7 @@ in the provided sources?
 THIS IS NOT FOOLPROOF — it's a heuristic that catches obvious 
 cases.
 """
-
+import json
 from litellm import completion
 
 
@@ -81,8 +81,14 @@ class HallucinationDetector:
         
         Use this in your evaluation pipeline, not in real-time.
         """
+        # Limit input sizes
+        if len(answer) > 10_000:
+            return {"is_grounded": None, "error": "answer_too_long"}
+    
+
         sources_text = "\n\n".join(
-            f"Source {i+1}: {s}" for i, s in enumerate(sources)
+            f"Source {i+1}: {s[:2000]}" # truncate each source
+            for i, s in enumerate(sources[:10]) # max 10 sources
         )
         
         response = completion(
@@ -108,9 +114,23 @@ Respond in JSON:
             temperature=0.0,
         )
         
-        import json
         try:
             raw = response.choices[0].message.content.strip()
-            return json.loads(raw)
-        except json.JSONDecodeError:
+            # Strip markdown fences
+            if raw.startswith("```"):
+                raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0]
+
+            parsed = json.loads(raw)
+
+            # Validate expected structure
+            if not isinstance(parsed.get("is_grounded"), bool):
+                return {"is_grounded": None, "error": "invalid_format"}
+            
+            return {
+                "is_grounded": parsed["is_grounded"],
+                "unsupported_claims": parsed.get("unsupported_claims", [])[:20],
+                "confidence": min(max(float(parsed.get("confidence", 0.0)), 0.0), 1.0),
+                
+            }
+        except (json.JSONDecodeError, KeyError, TypeError):
             return {"is_grounded": None, "error": "parse_failed"}
