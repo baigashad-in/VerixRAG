@@ -29,9 +29,33 @@ class QueryTransformer:
     It's unified interface to OpenAI, Anthropic, local models,
     etc. One function call, swap providers with a string change.
     """
+    MAX_QUERY_LENGTH = 2000
 
     def __init__(self, model: str = "gemini/gemini-2.0-flash"):
         self.model = model
+
+    def _safe_parse_json_list(self, raw: str, max_items: int = 5) -> list[str]:
+        """Safely parse LLM output as a JSON list of strings."""
+        # Strip markdown code if present
+        clean = raw.strip()
+        if clean.startswith("```"):
+            clean = clean.split("\n", 1)[-1].rsplit("```", 1)[0]
+        try:
+            parsed = json.loads(clean)
+        except json.JSONDecodeError:
+            return[]
+        
+        if not isinstance(parsed, list):
+            return []
+
+        # Validate: must be strings, limit count and length
+        result = []
+        for item in parsed[:max_items]:
+            if isinstance(item, str) and len(item) <= 500:
+                result.append(item.strip())
+
+        return result          
+
 
     def multi_query(self, query: str, n: int = 3) -> list[str]:
         """Break a complex query into focused sub-queries.
@@ -45,6 +69,9 @@ class QueryTransformer:
         Each su-query retrieves its own chunks, then we merge.
         This dramatically improves recall on multi-topic questions.
         """
+
+        if len(query) > self.MAX_QUERY_LENGTH:
+            raise ValueError("Query too long")
 
         response = completion(
             model = self.model,
@@ -60,15 +87,9 @@ Example output: ["sub-question 1", "sub-question 2", "sub-question 3"]
         )
 
         raw = response.choices[0].message.content.strip()
+        sub_queries = self._safe_parse_json_list(raw, max_items=n + 2)
 
-        try:
-            sub_queries = json.loads(raw)
-            # Always include the original query too
-            return [query] + sub_queries
-        except json.JSONDecodeError:
-            # LLM didn't return valid JSON - fall back to original
-            print(f"Multi-query parse failed, using original query")
-            return [query]
+        return [query] + sub_queries if sub_queries else [query]
     
     def hyde(self, query: str) -> str:
         """Generate a Hypothetical Document Embedding.
@@ -101,7 +122,9 @@ Example output: ["sub-question 1", "sub-question 2", "sub-question 3"]
         )
 
         hypothetical = response.choices[0].message.content.strip()
-        return hypothetical
+
+        # Limit output length to avoid tokenization issues downstream
+        return hypothetical[:2000]
     
     def expand_query(self, query: str) -> str:
         """"Add related terms to improve keyword matching.
@@ -109,6 +132,10 @@ Example output: ["sub-question 1", "sub-question 2", "sub-question 3"]
         Simple but effective for BM25. If the user says "refund"
         but your docs say "return," expansion bridges the gap.
         """
+
+        # Length check to prevent abuse - we don't want to feed a huge query into the LLM
+        if len(query) > self.MAX_QUERY_LENGTH:
+            raise ValueError("Query too long")
 
         response = completion(
             model = self.model,
