@@ -7,9 +7,11 @@ One command starts the whole system: uvicorn src.api.main:app --reload
 
 import os
 import html
+import traceback
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Security, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -144,6 +146,7 @@ app.add_middleware(
     allow_origins = ["http://localhost:3000"], # React frontend
     allow_methods = ["GET", "POST"],
     allow_headers = ["Content-Type", "X-API-Key"],
+    allow_credentials=False,
 )
 
 app.add_middleware(SecurityHeadersMiddleware)
@@ -163,6 +166,25 @@ async def limit_request_size(request: Request, call_next):
         raise HTTPException(413, "Request body too large")
     
     return await call_next(request)
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Never expose internal errors to the client.
+    
+    Log the full traceback server-side for debugging.
+    REutrn a generic message to the user.
+    """
+    # Log full error server-side
+    print(f"ERROR: {request.url.path}")
+    traceback.print_exc()
+
+    # Return generic message to client - no stack traces,
+    # no databse connection strings, no file paths
+    return JSONResponse(
+        status_code = 500,
+        content = {"error": "An internal error occurred. Please try again later."}
+    )
 
 # -- Routes --
 
