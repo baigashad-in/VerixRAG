@@ -8,17 +8,15 @@ One command starts the whole system: uvicorn src.api.main:app --reload
 import os
 import html
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Security, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
 from starlette.responses import Response
 from src.api.auth import verify_api_key
 from src.api.models import ChatRequest, IngestRequest
-from fastapi import Security
 
 load_dotenv()
 
@@ -155,6 +153,17 @@ app.add_middleware(
     allowed_hosts = ["localhost", "127.0.0.1"]
 )
 
+@app.middleware("http")
+async def limit_request_size(request: Request, call_next):
+    """Prevent oversized requests that could exhaust memory."""
+    MAX_BODY_SIZE = 1_000_000  # 1 MB
+
+    content_length = request.headers.get("content-length")
+    if content_length and int(content_length) > MAX_BODY_SIZE:
+        raise HTTPException(413, "Request body too large")
+    
+    return await call_next(request)
+
 # -- Routes --
 
 @app.get("/health")
@@ -173,6 +182,18 @@ async def chat(request: ChatRequest, api_key: str = Security(verify_api_key)):
 @app.post("/api/ingest")
 async def ingest(request: IngestRequest, api_key: str = Security(verify_api_key)):
     """Ingest documents into the knowledge base."""
+
+    store = app_state["store"]
+    stats = store.get_stats()
+
+    # Warn if re-ingesting would affect many existing chunks
+    if stats["total_chunks"] > 1000 and not request.confirm:
+        return {
+            "warning": f"Knowledge base has {stats['total_chunks']} chunks."
+                    f"Re-ingestion will replace existing chunks from matching files."
+                    f"Send 'confirm': true to proceed.",
+            "requires_confirmation": True,
+        }
 
     from  src.ingestion.ingest import IngestionPipeline
 

@@ -33,7 +33,8 @@ class IngestRequest(BaseModel):
     directory: str = Field(default="./documents", max_length=200)
     chunk_strategy: str = Field(default="recursive")
     chunk_size: int = Field(default=512, ge=100, le=2000)
-
+    confirm: bool = Field(default=False)
+    
     @field_validator("chunk_strategy")
     @classmethod
     def validate_chunk_strategy(cls, v):
