@@ -1,7 +1,7 @@
 """
 FastAPI application entry point.
 
-This is where everything connects: guardrails -> RAG pipeline -> reponse.
+This is where everything connects: guardrails -> RAG pipeline -> response.
 One command starts the whole system: uvicorn src.api.main:app --reload
 """
 
@@ -16,6 +16,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 from src.api.auth import verify_api_key
+from src.api.models import ChatRequest, IngestRequest
 from fastapi import Security
 
 load_dotenv()
@@ -161,36 +162,26 @@ async def health():
 
 
 @app.post("/api/chat")
-async def chat(request: dict, api_key: str = Security(verify_api_key)):
-    query = request.get("query", "").strip()
-
-    if not query:
-        return {"error": "Query is required."}
-    if len(query) > 2000:
-        return {"error": "Query too long (max 2000 chars)"}
-    
+async def chat(request: ChatRequest, api_key: str = Security(verify_api_key)):
     pipeline = app_state["pipeline"]
-    result = pipeline.answer(query = query)
-
+    result = pipeline.answer(query = request.query, top_k = request.top_k)
     return result
 
+
 @app.post("/api/ingest")
-async def ingest(request: dict, api_key: str = Security(verify_api_key)):
+async def ingest(request: IngestRequest, api_key: str = Security(verify_api_key)):
     """Ingest documents into the knowledge base."""
-    directory = request.get("directory", "./documents")
-    strategy = request.get("chunk_strategy", "recursive")
-    chunk_size = request.get("chunk_size", 512)
 
     from  src.ingestion.ingest import IngestionPipeline
 
     pipeline = IngestionPipeline(
-        chunk_strategy = strategy,
-        chunk_size = chunk_size,
+        chunk_strategy = request.chunk_strategy,
+        chunk_size = request.chunk_size,
         embedding_model= os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2"),
         db_connection = os.getenv("DATABASE_URL"),
     )
 
-    results = pipeline.ingest_directory(directory)
+    results = pipeline.ingest_directory(request.directory)
 
     # Rebuild BM25 index after new ingestion
     bm25 = app_state.get("bm25")
@@ -214,7 +205,7 @@ async def evaluate(request: dict, api_key: str = Security(verify_api_key)):
     else:
         dataset = build_sample_dataset()
 
-    pipeline = app_state["pipeline"].rag # unwrap from GuradedRAGPipeline
+    pipeline = app_state["pipeline"].rag # unwrap from GuardedRAGPipeline
     metrics = RAGMetrics()
     runner = EvaluationRunner(pipeline, metrics, dataset)
     report = runner.run(config_label = label)
