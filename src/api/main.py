@@ -6,6 +6,7 @@ One command starts the whole system: uvicorn src.api.main:app --reload
 """
 
 import os
+import html
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -165,6 +166,7 @@ async def health():
 async def chat(request: ChatRequest, api_key: str = Security(verify_api_key)):
     pipeline = app_state["pipeline"]
     result = pipeline.answer(query = request.query, top_k = request.top_k)
+    result["answer"] = html.escape(result["answer"])  # Sanitize output to prevent XSS
     return result
 
 
