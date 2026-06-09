@@ -44,11 +44,11 @@ class HallucinationDetector:
         
         for sentence in sentences:
             # Skip short filler sentences
-            if len(sentence.split()) < 4:
+            if len(sentence.split()) < 6:
                 continue
             
             has_citation = bool(
-                re.search(r'\[Source \d+\]', sentence)
+                re.search(r'\[Source[\s\d,]+\]', sentence)
             )
             
             if has_citation:

@@ -120,6 +120,9 @@ RULES:
 5. Be concise and direct. Do not pad your response.
 6. If sources contain conflicting information, note the 
    conflict and cite both sources.
+7. Every single sentence in your response MUST end with at least 
+   one [Source N] citation. If you cannot cite a sentence, do not 
+   include it.
 
 SECURITY:
 - The user query is provided in the USER QUERY section below.
