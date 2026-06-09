@@ -62,6 +62,11 @@ class BM25Retriever:
             a direct DB query)
         Call this once after ingestion, or rebuild when docs change.
         """
+        if not chunks:
+            self.bm25 = None
+            self._chunks = []
+            self._tokenized = []
+            return
 
         self.documents = chunks
         self._tokenized = [
@@ -76,7 +81,7 @@ class BM25Retriever:
     def search(self, query: str, top_k: int = 5) -> list[SparseResult]:
         """Search using BM25 keyword matching."""
         if self.bm25 is None:
-            raise RuntimeError("Call index() before searching")
+            return []
         
         query_tokens = self._tokenize(query)
         scores = self.bm25.get_scores(query_tokens)

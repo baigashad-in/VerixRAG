@@ -22,7 +22,7 @@ class DocumentLoader:
 
     def load_file(self, file_path: str) -> Document:
         """Loads a file and returns a Document object."""
-        path = Path(file_path)
+        path = Path(file_path).resolve()
 
         # Prevent path traversal — file must be inside allowed directory
         if not str(path).startswith(str(self.allowed_dir)):
