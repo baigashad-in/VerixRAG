@@ -1,0 +1,291 @@
+{
+  "downloaded": 42,
+  "failed": 8,
+  "total_files": 42,
+  "sources": [
+    {
+      "filename": "contrib_react.md",
+      "url": "https://raw.githubusercontent.com/facebook/react/main/CONTRIBUTING.md",
+      "domain": "open_source"
+    },
+    {
+      "filename": "contrib_vscode.md",
+      "url": "https://raw.githubusercontent.com/microsoft/vscode/main/CONTRIBUTING.md",
+      "domain": "open_source"
+    },
+    {
+      "filename": "contrib_rust.md",
+      "url": "https://raw.githubusercontent.com/rust-lang/rust/master/CONTRIBUTING.md",
+      "domain": "open_source"
+    },
+    {
+      "filename": "contrib_tensorflow.md",
+      "url": "https://raw.githubusercontent.com/tensorflow/tensorflow/master/CONTRIBUTING.md",
+      "domain": "open_source"
+    },
+    {
+      "filename": "contrib_django.md",
+      "url": "https://raw.githubusercontent.com/django/django/main/CONTRIBUTING.rst",
+      "domain": "open_source"
+    },
+    {
+      "filename": "contrib_kubernetes.md",
+      "url": "https://raw.githubusercontent.com/kubernetes/community/master/contributors/guide/README.md",
+      "domain": "open_source"
+    },
+    {
+      "filename": "contrib_nodejs.md",
+      "url": "https://raw.githubusercontent.com/nodejs/node/main/CONTRIBUTING.md",
+      "domain": "open_source"
+    },
+    {
+      "filename": "contrib_flutter.md",
+      "url": "https://raw.githubusercontent.com/flutter/flutter/master/CONTRIBUTING.md",
+      "domain": "open_source"
+    },
+    {
+      "filename": "security_electron.md",
+      "url": "https://raw.githubusercontent.com/electron/electron/main/SECURITY.md",
+      "domain": "security"
+    },
+    {
+      "filename": "security_nextjs.md",
+      "url": "https://raw.githubusercontent.com/vercel/next.js/canary/SECURITY.md",
+      "domain": "security"
+    },
+    {
+      "filename": "security_django.md",
+      "url": "https://raw.githubusercontent.com/django/django/main/docs/internals/security.txt",
+      "domain": "security"
+    },
+    {
+      "filename": "security_curl.md",
+      "url": "https://raw.githubusercontent.com/curl/curl/master/docs/SECURITY-ADVISORY.md",
+      "domain": "security"
+    },
+    {
+      "filename": "security_kubernetes.md",
+      "url": "https://raw.githubusercontent.com/kubernetes/community/master/committee-security-response/README.md",
+      "domain": "security"
+    },
+    {
+      "filename": "coc_contributor_covenant.md",
+      "url": "https://raw.githubusercontent.com/EthicalSource/contributor_covenant/release/content/version/2/1/code_of_conduct.md",
+      "domain": "policy"
+    },
+    {
+      "filename": "coc_golang.md",
+      "url": "https://raw.githubusercontent.com/golang/go/master/CONTRIBUTING.md",
+      "domain": "policy"
+    },
+    {
+      "filename": "coc_rust.md",
+      "url": "https://raw.githubusercontent.com/rust-lang/www.rust-lang.org/master/static/policies/code-of-conduct.md",
+      "domain": "policy"
+    },
+    {
+      "filename": "docs_fastapi_tutorial.md",
+      "url": "https://raw.githubusercontent.com/fastapi/fastapi/master/docs/en/docs/tutorial/first-steps.md",
+      "domain": "technical"
+    },
+    {
+      "filename": "docs_fastapi_security.md",
+      "url": "https://raw.githubusercontent.com/fastapi/fastapi/master/docs/en/docs/tutorial/security/index.md",
+      "domain": "technical"
+    },
+    {
+      "filename": "docs_docker_getstarted.md",
+      "url": "https://raw.githubusercontent.com/docker/docs/main/content/get-started/introduction/develop-with-containers.md",
+      "domain": "technical"
+    },
+    {
+      "filename": "docs_postgres_backup.md",
+      "url": "https://raw.githubusercontent.com/postgres/postgres/master/doc/src/sgml/backup.sgml",
+      "domain": "technical"
+    },
+    {
+      "filename": "docs_redis_security.md",
+      "url": "https://raw.githubusercontent.com/redis/redis-doc/master/docs/management/security/index.md",
+      "domain": "technical"
+    },
+    {
+      "filename": "docs_nginx_beginners.md",
+      "url": "https://raw.githubusercontent.com/nginx/nginx/master/docs/beginners_guide",
+      "domain": "technical"
+    },
+    {
+      "filename": "readme_htmx.md",
+      "url": "https://raw.githubusercontent.com/bigskysoftware/htmx/master/README.md",
+      "domain": "technical"
+    },
+    {
+      "filename": "readme_fastapi.md",
+      "url": "https://raw.githubusercontent.com/fastapi/fastapi/master/README.md",
+      "domain": "technical"
+    },
+    {
+      "filename": "readme_langchain.md",
+      "url": "https://raw.githubusercontent.com/langchain-ai/langchain/master/README.md",
+      "domain": "technical"
+    },
+    {
+      "filename": "readme_ollama.md",
+      "url": "https://raw.githubusercontent.com/ollama/ollama/main/README.md",
+      "domain": "technical"
+    },
+    {
+      "filename": "readme_deno.md",
+      "url": "https://raw.githubusercontent.com/denoland/deno/main/README.md",
+      "domain": "technical"
+    },
+    {
+      "filename": "readme_pytorch.md",
+      "url": "https://raw.githubusercontent.com/pytorch/pytorch/main/README.md",
+      "domain": "technical"
+    },
+    {
+      "filename": "readme_homebrew.md",
+      "url": "https://raw.githubusercontent.com/Homebrew/brew/master/README.md",
+      "domain": "technical"
+    },
+    {
+      "filename": "readme_svelte.md",
+      "url": "https://raw.githubusercontent.com/sveltejs/svelte/main/README.md",
+      "domain": "technical"
+    },
+    {
+      "filename": "governance_nodejs.md",
+      "url": "https://raw.githubusercontent.com/nodejs/node/main/GOVERNANCE.md",
+      "domain": "governance"
+    },
+    {
+      "filename": "governance_rust.md",
+      "url": "https://raw.githubusercontent.com/rust-lang/rfcs/master/text/1068-rust-governance.md",
+      "domain": "governance"
+    },
+    {
+      "filename": "changelog_vscode.md",
+      "url": "https://raw.githubusercontent.com/microsoft/vscode/main/CHANGELOG.md",
+      "domain": "changelog"
+    },
+    {
+      "filename": "license_apache2.md",
+      "url": "https://raw.githubusercontent.com/apache/.github/main/LICENSE",
+      "domain": "legal"
+    },
+    {
+      "filename": "license_mit_babel.md",
+      "url": "https://raw.githubusercontent.com/babel/babel/main/LICENSE",
+      "domain": "legal"
+    },
+    {
+      "filename": "license_gpl3.md",
+      "url": "https://raw.githubusercontent.com/torvalds/linux/master/COPYING",
+      "domain": "legal"
+    },
+    {
+      "filename": "style_google_python.md",
+      "url": "https://raw.githubusercontent.com/google/styleguide/gh-pages/pyguide.md",
+      "domain": "style_guide"
+    },
+    {
+      "filename": "style_airbnb_js.md",
+      "url": "https://raw.githubusercontent.com/airbnb/javascript/master/README.md",
+      "domain": "style_guide"
+    },
+    {
+      "filename": "style_google_typescript.md",
+      "url": "https://raw.githubusercontent.com/google/gts/main/README.md",
+      "domain": "style_guide"
+    },
+    {
+      "filename": "support_vscode.md",
+      "url": "https://raw.githubusercontent.com/microsoft/vscode/main/SUPPORT.md",
+      "domain": "support"
+    },
+    {
+      "filename": "support_tensorflow.md",
+      "url": "https://raw.githubusercontent.com/tensorflow/tensorflow/master/ISSUES.md",
+      "domain": "support"
+    },
+    {
+      "filename": "ops_gitops_flux.md",
+      "url": "https://raw.githubusercontent.com/fluxcd/flux2/main/README.md",
+      "domain": "devops"
+    },
+    {
+      "filename": "ops_terraform_getstarted.md",
+      "url": "https://raw.githubusercontent.com/hashicorp/terraform/main/README.md",
+      "domain": "devops"
+    },
+    {
+      "filename": "ops_ansible_readme.md",
+      "url": "https://raw.githubusercontent.com/ansible/ansible/devel/README.md",
+      "domain": "devops"
+    },
+    {
+      "filename": "ml_huggingface_readme.md",
+      "url": "https://raw.githubusercontent.com/huggingface/transformers/main/README.md",
+      "domain": "ml"
+    },
+    {
+      "filename": "ml_scikit_contrib.md",
+      "url": "https://raw.githubusercontent.com/scikit-learn/scikit-learn/main/CONTRIBUTING.md",
+      "domain": "ml"
+    },
+    {
+      "filename": "ml_pandas_readme.md",
+      "url": "https://raw.githubusercontent.com/pandas-dev/pandas/main/README.md",
+      "domain": "ml"
+    },
+    {
+      "filename": "faq_irs_filing.md",
+      "url": "https://www.irs.gov/faqs/filing-requirements-status-dependents/general",
+      "domain": "government"
+    },
+    {
+      "filename": "guide_ada_compliance.md",
+      "url": "https://www.ada.gov/resources/small-business/",
+      "domain": "government"
+    },
+    {
+      "filename": "guide_ftc_privacy.md",
+      "url": "https://www.ftc.gov/business-guidance/privacy-security/data-security",
+      "domain": "government"
+    }
+  ],
+  "failed_urls": [
+    {
+      "filename": "security_nextjs.md",
+      "url": "https://raw.githubusercontent.com/vercel/next.js/canary/SECURITY.md"
+    },
+    {
+      "filename": "coc_rust.md",
+      "url": "https://raw.githubusercontent.com/rust-lang/www.rust-lang.org/master/static/policies/code-of-conduct.md"
+    },
+    {
+      "filename": "docs_redis_security.md",
+      "url": "https://raw.githubusercontent.com/redis/redis-doc/master/docs/management/security/index.md"
+    },
+    {
+      "filename": "docs_nginx_beginners.md",
+      "url": "https://raw.githubusercontent.com/nginx/nginx/master/docs/beginners_guide"
+    },
+    {
+      "filename": "changelog_vscode.md",
+      "url": "https://raw.githubusercontent.com/microsoft/vscode/main/CHANGELOG.md"
+    },
+    {
+      "filename": "support_vscode.md",
+      "url": "https://raw.githubusercontent.com/microsoft/vscode/main/SUPPORT.md"
+    },
+    {
+      "filename": "faq_irs_filing.md",
+      "url": "https://www.irs.gov/faqs/filing-requirements-status-dependents/general"
+    },
+    {
+      "filename": "guide_ada_compliance.md",
+      "url": "https://www.ada.gov/resources/small-business/"
+    }
+  ]
+}
