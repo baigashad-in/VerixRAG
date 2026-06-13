@@ -18,7 +18,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Groq key fallback
-GROQ_KEYS = [k for k in [os.getenv("GROQ_API_KEY"), os.getenv("GROQ_API_KEY_BACKUP")] if k]
+GROQ_KEYS = [k for k in [os.getenv("GROQ_API_KEY"), os.getenv("GROQ_API_KEY_2"), os.getenv("GROQ_API_KEY_3")] if k]
 _key_index = 0
 
 def swap_groq_key():
