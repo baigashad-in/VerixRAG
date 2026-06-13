@@ -17,6 +17,17 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# Groq key fallback
+GROQ_KEYS = [k for k in [os.getenv("GROQ_API_KEY"), os.getenv("GROQ_API_KEY_BACKUP")] if k]
+_key_index = 0
+
+def swap_groq_key():
+    global _key_index
+    if len(GROQ_KEYS) > 1:
+        _key_index = (_key_index + 1) % len(GROQ_KEYS)
+        os.environ["GROQ_API_KEY"] = GROQ_KEYS[_key_index]
+        print(f"\n  Swapped to Groq key #{_key_index + 1}")
+
 CATEGORIES = {
     "easy": "Simple factual questions with answers clearly stated in one sentence.",
     "medium": "Questions requiring synthesis of 2-3 facts from the same section.",
@@ -67,9 +78,9 @@ def call_with_retry(model, messages, max_retries = 5, min_delay = 5.0):
             is_daily = "per day" in error_str.lower() or "PerDay" in error_str
 
             if is_daily and retry_delay and retry_delay > 600:
-                wait = min(retry_delay + 5, 300)
-                print(f"\n DAILY LIMIT - waiting {wait:.0f}s...")
-                time.sleep(wait)
+                print(f"\n DAILY LIMIT - swapping key and retrying...")
+                swap_groq_key()
+                time.sleep(5)
                 continue
             elif retry_delay:
                 print(f" (wait {retry_delay:.0f}s)", end="", flush = True)

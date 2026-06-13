@@ -7,6 +7,7 @@ One command starts the whole system: uvicorn src.api.main:app --reload
 
 import os
 import html
+import time
 import traceback
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Security, Request, HTTPException
@@ -21,6 +22,17 @@ from src.api.auth import verify_api_key
 from src.api.models import ChatRequest, IngestRequest
 
 load_dotenv()
+
+# Groq key fallback
+GROQ_KEYS = [k for k in [os.getenv("GROQ_API_KEY"), os.getenv("GROQ_API_KEY_BACKUP")] if k]
+_key_index = 0
+
+def swap_groq_key():
+    global _key_index
+    if len(GROQ_KEYS) > 1:
+        _key_index = (_key_index + 1) % len(GROQ_KEYS)
+        os.environ["GROQ_API_KEY"] = GROQ_KEYS[_key_index]
+        print(f"Swapped to Groq key #{_key_index + 1}")
 
 # Shared instances - initialized once at startup
 app_state = {}
@@ -196,7 +208,18 @@ async def health():
 @app.post("/api/chat")
 async def chat(request: ChatRequest, api_key: str = Security(verify_api_key)):
     pipeline = app_state["pipeline"]
-    result = pipeline.answer(query = request.query, top_k = request.top_k)
+    for attempt in range(3):
+        try:
+            result = pipeline.answer(query = request.query, top_k = request.top_k)
+            break
+        except Exception as e:
+            if "rate" in str(e).lower() or "429" in str(e) or "quota" in str(e).lower():
+                swap_groq_key()
+                time.sleep(5)
+                continue
+            raise
+    else:
+        raise HTTPException(status_code=429, detail="All API keys exhausted")
     result["answer"] = html.escape(result["answer"])  # Sanitize output to prevent XSS
     return result
 
