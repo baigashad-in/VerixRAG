@@ -42,11 +42,7 @@ class KeywordClassifier:
             out_of_scope_patterns: regex patterns for clearly
                 off-topic queries.
         """
-        self.in_scope_terms = set(t.lower() for t in (in_scope_terms or [
-            "refund", "return", "shipping", "delivery", "account", "password", "billing", "invoice", "cancel", "subscription",
-            "payment", "credit", "order", "track", "policy",
-            "pricing", "plan", "upgrade", "support", "help",
-        ]))
+        self.in_scope_terms = set(t.lower() for t in (in_scope_terms or []))
 
         self.out_of_scope_patterns = out_of_scope_patterns or [
             r"tell me a joke",
@@ -114,9 +110,11 @@ class LLMClassifier:
                  scope_description: str = None):
         self.model = model
         self.scope_description = scope_description or (
-            "Customer support for an e-commerce platform. Topics include:"
-            "refunds, returns, shipping, account management, billing,"
-            "subscriptions, order tracking, and product policies."
+                "A knowledge base containing internal documents on various topics "
+                "including software development, open source contributing guides, "
+                "security policies, governance, legal licenses, coding style guides, "
+                "DevOps tools, machine learning frameworks, and technical documentation. "
+                "A query is in-scope if it could be answered by referencing any of these documents."
         )
 
     def classify(self, query: str) -> dict:
