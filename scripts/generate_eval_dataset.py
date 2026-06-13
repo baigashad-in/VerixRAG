@@ -8,6 +8,7 @@ for the test runner.
 
 import json
 import os
+import re
 import time
 import argparse
 from pathlib import Path
@@ -24,10 +25,68 @@ CATEGORIES = {
     "out_of_scope": "Questions completely unrelated to the document content.",
 }
 
+RATE_LIMITS = {
+    "groq": {"min_delay": 15, "max_retries": 5},
+    "gemini": {"min_delay": 5, "max_retries": 5},
+    "default": {"min_delay": 3, "max_retries": 3},
+}
+
+def get_provider(model: str) -> str:
+    if "/" in model:
+        return model.split("/")[0]
+    return "default"
+
+def parse_retry_delay(error_msg: str) -> float | None:
+    match = re.search(r'retry in (\d+\.?\d*)s', str(error_msg))
+    if match:
+        return float(match.group(1))
+    match = re.search(r'try again in (\d+)m(\d+\.?\d*)s', str(error_msg))
+    if match:
+        return int(match.group(1)) * 60 + float(match.group(2))
+    match = re.search(r'try again in (\d+)ms', str(error_msg))
+    if match:
+        return int(match.group(1)) / 1000.0
+    match = re.search(r'try again in (\d+)h(\d+)m', str(error_msg))
+    if match:
+        return int(match.group(1)) * 3600 + int(match.group(2)) * 60
+    return None
+
+def call_with_retry(model, messages, max_retries = 5, min_delay = 5.0):
+    for attempt in range(max_retries + 1):
+        try:
+            response = completion(model = model, messages = messages, temperature = 0.7)
+            return response.choices[0].message.content.strip()
+        except Exception as e:
+            error_str = str(e)
+            is_rate_limit = "rate" in error_str.lower() or "429" in error_str or "quota" in error_str.lower()
+            if not is_rate_limit:
+                print(f"\n Non-rate-limit error: {error_str[:200]}")
+                return None
+            
+            retry_delay = parse_retry_delay(error_str)
+            is_daily = "per day" in error_str.lower() or "PerDay" in error_str
+
+            if is_daily and retry_delay and retry_delay > 600:
+                wait = min(retry_delay + 5, 300)
+                print(f"\n DAILY LIMIT - waiting {wait:.0f}s...")
+                time.sleep(wait)
+                continue
+            elif retry_delay:
+                print(f" (wait {retry_delay:.0f}s)", end="", flush = True)
+                time.sleep(retry_delay + 2)
+                continue
+            else:
+                wait_time = min_delay * (2 ** attempt)
+                print(f" (backoff {wait_time:.0f}s)", end="", flush = True)
+                time.sleep(wait_time)
+    print(f"\n FAILED after {max_retries} retries")
+    return None
+
 
 def generate_questions(document_text: str, source_file: str,
                        category: str, description: str,
-                       count: int = 10, model: str = "gemini/gemini-2.0-flash") -> list[dict]:
+                       count: int = 10, model: str = "gemini/gemini-2.0-flash",
+                       min_delay: float = 5.0) -> list[dict]:
     """Generate Q&A pairs for a single category."""
 
     prompt = f"""You are generating evaluation questions for a RAG (Retrieval Augmented Generation) system.
@@ -61,15 +120,19 @@ Return ONLY a JSON array, no other text:
   }}
 ]"""
 
+    provider = get_provider(model)
+    limits = RATE_LIMITS.get(provider, RATE_LIMITS["default"])
+
+    raw = call_with_retry(
+        model = model,
+        messages = [{"role": "user", "content": prompt}],
+        max_retries = limits["max_retries"],
+        min_delay = min_delay,
+    )
+
+    if not raw:
+        return []
     try:
-        response = completion(
-            model=model,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.7,
-        )
-
-        raw = response.choices[0].message.content.strip()
-
         # Strip markdown fences
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0]
@@ -100,12 +163,26 @@ def generate_dataset(documents_dir: str, output_file: str,
                      model: str = "gemini/gemini-2.0-flash"):
     """Generate a full evaluation dataset from all documents."""
 
+    provider = get_provider(model)
+    limits = RATE_LIMITS.get(provider, RATE_LIMITS["default"])
+    min_delay = limits["min_delay"]
+
     doc_dir = Path(documents_dir)
     all_questions = []
     
     # Load all documents
     doc_files = list(doc_dir.glob("*.md")) + list(doc_dir.glob("*.txt"))
     print(f"Found {len(doc_files)} documents in {documents_dir}")
+
+    progress_file = Path(output_file).with_suffix(".progress.json")
+    completed_keys = set()
+
+    if progress_file.exists():
+        with open(progress_file, "r", encoding="utf-8") as f:
+            progress = json.load(f)
+            all_questions = progress.get("questions", [])
+            completed_keys = set(progress.get("completed", []))
+        print(f"Resuming: {len(completed_keys)} batches done, {len(all_questions)} questions so far")
 
     for doc_path in doc_files:
         print(f"\n{'='*60}")
@@ -116,6 +193,12 @@ def generate_dataset(documents_dir: str, output_file: str,
         print(f"  Content length: {len(content)} chars")
 
         for category, description in CATEGORIES.items():
+            # Skip check
+            key = f"{doc_path.name}:{category}"
+            if key in completed_keys:
+                print(f"  SKIP {category} (already done)")
+                continue
+
             count = questions_per_category
             # Fewer out-of-scope questions per doc
             if category == "out_of_scope":
@@ -130,13 +213,22 @@ def generate_dataset(documents_dir: str, output_file: str,
                 description=description,
                 count=count,
                 model=model,
+                min_delay=min_delay,
             )
 
             all_questions.extend(questions)
             print(f"    Got {len(questions)} questions")
 
+            # 
+            if len(questions) > 0:
+                completed_keys.add(key)
+
+            progress_data = {"completed": list(completed_keys), "questions": all_questions}
+            with open(progress_file, "w", encoding = "utf-8") as f:
+                json.dump(progress_data, f, indent = 2, ensure_ascii = False)
+
             # Rate limiting
-            time.sleep(2)
+            time.sleep(min_delay)
 
     # Add cross-document questions
     if len(doc_files) > 1:
@@ -168,6 +260,9 @@ def generate_dataset(documents_dir: str, output_file: str,
 
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(dataset, f, indent=2, ensure_ascii=False)
+
+    if progress_file.exists():
+        progress_file.unlink()
 
     print(f"\n{'='*60}")
     print(f"Dataset saved to {output_file}")
@@ -210,15 +305,18 @@ Return ONLY a JSON array:
     "category": "hard"
   }}
 ]"""
+    
+    raw = call_with_retry(
+        model = model,
+        messages = [{"role": "user", "content": prompt}],
+        max_retries = 3,
+        min_delay = 5.0,
+    )
+
+    if not raw:
+        return []
 
     try:
-        response = completion(
-            model=model,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.7,
-        )
-
-        raw = response.choices[0].message.content.strip()
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0]
 

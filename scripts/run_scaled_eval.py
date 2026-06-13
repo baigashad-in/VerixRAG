@@ -31,8 +31,8 @@ HEADERS = {
 }
 
 # Rate limiting
-MIN_DELAY = 2.0          # seconds between requests
-MAX_DELAY = 60.0          # max backoff delay
+MIN_DELAY = 8.0          # seconds between requests
+MAX_DELAY = 120.0          # max backoff delay
 BACKOFF_FACTOR = 2.0      # exponential backoff multiplier
 
 
@@ -56,7 +56,7 @@ def save_progress(progress_path: str, progress: dict):
         json.dump(progress, f, indent=2, ensure_ascii=False)
 
 
-def query_api(query: str, retries: int = 3) -> dict | None:
+def query_api(query: str, retries: int = 5) -> dict | None:
     """Send a query to the RAG API with retry logic."""
     delay = MIN_DELAY
 
@@ -74,6 +74,12 @@ def query_api(query: str, retries: int = 3) -> dict | None:
                 print(f"    Rate limited. Waiting {retry_after}s...")
                 time.sleep(retry_after)
                 delay = min(delay * BACKOFF_FACTOR, MAX_DELAY)
+                continue
+
+            if response.status_code == 500:
+                wait = min(30 * (attempt + 1), 120)
+                print(f" (500, wait {wait}s)", end="", flush=True)
+                time.sleep(wait)
                 continue
 
             if response.status_code != 200:
@@ -419,12 +425,18 @@ def main():
                         help="Directory for results and progress files")
     parser.add_argument("--api-url", default=None,
                         help="API base URL (default: from .env or localhost:8000)")
+    parser.add_argument("--delay", type = float, default = None,
+                        help = "Override delay between queries (seconds)")
 
     args = parser.parse_args()
 
     if args.api_url:
         global API
         API = args.api_url
+
+    if args.delay:
+        global MIN_DELAY
+        MIN_DELAY = args.delay
 
     run_evaluation(args.dataset, args.output_dir)
 
