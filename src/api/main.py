@@ -138,6 +138,7 @@ async def lifespan(app: FastAPI):
     app_state["store"] = store
     app_state["embedder"] = embedder
 
+    print(f"Groq API keys loaded: {len(GROQ_KEYS)}")
     print("Startup complete - ready to serve")
 
     yield   # app runs here
