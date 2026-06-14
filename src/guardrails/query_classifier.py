@@ -106,7 +106,7 @@ class LLMClassifier:
     list doesn't cover.
     """
 
-    def __init__(self, model: str = "gemini/gemini-2.0-flash",
+    def __init__(self, model: str = "groq/llama-3.3-70b-versatile",
                  scope_description: str = None):
         self.model = model
         self.scope_description = scope_description or (
