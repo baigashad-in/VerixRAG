@@ -89,7 +89,7 @@ class HallucinationDetector:
     in evaluation pipeline.
     """
     
-    def __init__(self, model: str = "gemini/gemini-2.0-flash"):
+    def __init__(self, model: str = "gemini/gemini-3.8-flash"):
         self.model = model
     
     def check_citation_coverage(self, answer: str, num_sources: int) -> dict:

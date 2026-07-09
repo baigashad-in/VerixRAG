@@ -96,7 +96,7 @@ def call_with_retry(model, messages, max_retries = 5, min_delay = 5.0):
 
 def generate_questions(document_text: str, source_file: str,
                        category: str, description: str,
-                       count: int = 10, model: str = "gemini/gemini-2.0-flash",
+                       count: int = 10, model: str = "gemini/gemini-3.8-flash",
                        min_delay: float = 5.0) -> list[dict]:
     """Generate Q&A pairs for a single category."""
 
@@ -171,7 +171,7 @@ Return ONLY a JSON array, no other text:
 
 def generate_dataset(documents_dir: str, output_file: str,
                      questions_per_category: int = 10,
-                     model: str = "gemini/gemini-2.0-flash"):
+                     model: str = "gemini/gemini-3.8-flash"):
     """Generate a full evaluation dataset from all documents."""
 
     provider = get_provider(model)
@@ -348,7 +348,7 @@ def main():
                         help="Output JSON file")
     parser.add_argument("--per-category", type=int, default=10,
                         help="Questions per category per document")
-    parser.add_argument("--model", default="gemini/gemini-2.0-flash",
+    parser.add_argument("--model", default="gemini/gemini-3.8-flash",
                         help="LLM model for generation")
 
     args = parser.parse_args()

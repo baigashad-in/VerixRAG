@@ -31,7 +31,7 @@ class QueryTransformer:
     """
     MAX_QUERY_LENGTH = 2000
 
-    def __init__(self, model: str = "gemini/gemini-2.0-flash"):
+    def __init__(self, model: str = "gemini/gemini-3.8-flash"):
         self.model = model
 
     def _safe_parse_json_list(self, raw: str, max_items: int = 5) -> list[str]:
