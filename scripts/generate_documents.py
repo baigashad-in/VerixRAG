@@ -5,8 +5,6 @@ Creates realistic knowledge base documents spanning different industries,
 writing styles, and complexity levels to stress-test the RAG pipeline.
 """
 
-import json
-import os
 import time
 import argparse
 from pathlib import Path

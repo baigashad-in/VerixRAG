@@ -4,7 +4,7 @@ This is the main entry point for application.
 """
 
 from src.query.enhanced_retrieval import EnhancedRetriever, QueryStrategy
-from src.generation.generator import RAGGenerator, GeneratedResponse
+from src.generation.generator import RAGGenerator
 from src.generation.hallucination_check import HallucinationDetector
 
 

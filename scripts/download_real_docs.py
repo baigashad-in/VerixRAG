@@ -9,12 +9,10 @@ Pulls genuine human-written documents from:
 These are messy, real, and diverse — exactly what RAG needs to handle.
 """
 
-import os
 import re
 import json
 import time
 import argparse
-import hashlib
 from pathlib import Path
 from urllib.parse import urlparse
 

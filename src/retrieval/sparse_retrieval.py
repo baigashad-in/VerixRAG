@@ -16,7 +16,6 @@ Because "the refund policy" would match every document containing "the." BM25's 
 from dataclasses import dataclass
 from rank_bm25 import BM25Okapi
 import re
-from src.storage.vector_store import VectorStore
 
 @dataclass
 class SparseResult:

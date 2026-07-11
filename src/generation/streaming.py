@@ -118,7 +118,7 @@ async def chat_endpoint(request: Request):
     
     context = "placeholder — wire up retrieval pipeline"
     system_prompt = RAGGenerator()._build_system_prompt()
-    model = "groq/llama-3.3-70b-versatile"
+    model = "groq/openai/gpt-oss-120b"
     
     return StreamingResponse(
         stream_rag_response(query, context, system_prompt, model),

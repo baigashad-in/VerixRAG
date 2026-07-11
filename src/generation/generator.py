@@ -53,7 +53,7 @@ class RAGGenerator:
     _groq_keys = None
     _groq_key_index = 0
     
-    def __init__(self, model: str = "groq/llama-3.3-70b-versatile"):
+    def __init__(self, model: str = "groq/openai/gpt-oss-120b"):
         self.model = model
 
     def _sanitize_query(self, query: str) -> str:
