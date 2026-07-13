@@ -18,14 +18,14 @@ class RAGMetrics:
     Higher is better for all metrics.
     """
 
-    def __init__(self, model: str = "gemini/gemini-3.8-flash"):
+    def __init__(self, model: str = "gemini/gemini-3.1-flash-lite"):
         self.model = model
         self.request_delay = 2 # seconds between LLM calls (rate limits)
 
     def _llm_call(self, prompt: str) -> str:
         """Rate-limited LLM call for evaluation."""
         time.sleep(self.request_delay)
-        response.completion(
+        response = completion(
             model = self.model,
             messages = [{"role": "user", "content": prompt}],
             temperature = 0.0,
@@ -35,7 +35,7 @@ class RAGMetrics:
     def _safe_parse_json(self, raw: str) -> dict:
         """Parse LLM JSON output safely."""
         clean = raw.strip()
-        if clean.startwith("```"):
+        if clean.startswith("```"):
             clean = clean.split("\n", 1)[-1].rsplit("```", 1)[0]
         try:
             return json.loads(clean)

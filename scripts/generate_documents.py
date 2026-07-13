@@ -206,7 +206,7 @@ DOCUMENT_SPECS = [
 ]
 
 
-def generate_document(spec: dict, model: str = "gemini/gemini-3.8-flash") -> str:
+def generate_document(spec: dict, model: str = "gemini/gemini-3.1-flash-lite") -> str:
     """Generate a single document from a spec."""
 
     prompt = f"""{spec['prompt']}
@@ -235,7 +235,7 @@ def main():
     parser = argparse.ArgumentParser(description="Generate 50+ diverse documents")
     parser.add_argument("--output-dir", default="./documents",
                         help="Output directory for documents")
-    parser.add_argument("--model", default="gemini/gemini-3.8-flash",
+    parser.add_argument("--model", default="gemini/gemini-3.1-flash-lite",
                         help="LLM model for generation")
     parser.add_argument("--delay", type=float, default=3.0,
                         help="Seconds between API calls")
