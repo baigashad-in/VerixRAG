@@ -6,6 +6,7 @@ in the provided sources?
 THIS IS NOT FOOLPROOF — it's a heuristic that catches obvious 
 cases.
 """
+import os
 import json
 import re
 from litellm import completion
@@ -173,22 +174,24 @@ class HallucinationDetector:
             messages=[{
                 "role": "user",
                 "content": f"""Evaluate whether this answer is 
-fully supported by the provided sources.
+                fully supported by the provided sources.
 
-Sources:
-{sources_text}
+                Sources:
+                {sources_text}
 
-Answer being evaluated:
-{answer}
+                Answer being evaluated:
+                {answer}
 
-Respond in JSON:
-{{
-    "is_grounded": true/false,
-    "unsupported_claims": ["list of claims not in sources"],
-    "confidence": 0.0-1.0
-}}"""
-            }],
-            temperature=0.0,
+                Respond in JSON:
+                {{
+                    "is_grounded": true/false,
+                    "unsupported_claims": ["list of claims not in sources"],
+                    "confidence": 0.0-1.0
+                }}"""
+                            }],
+            temperature=0.0, 
+            api_key=os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"),
+            custom_llm_provider="gemini",
         )
         
         try:

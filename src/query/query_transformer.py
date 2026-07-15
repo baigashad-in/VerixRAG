@@ -19,6 +19,7 @@ HyDE answer: "To reverse a payment, navigate to Transaction History, select the 
 keyword matching. "refund" -> "refund return money back reimburse"
 """
 
+import os
 import json
 from litellm import completion
 
@@ -80,10 +81,12 @@ class QueryTransformer:
                 "content": f"""Break this question into {n} focused
                  sub-questions for searching a knowledge base. Return ONLY a JSON array of strings, no other text.
                  Question: {query}
-Example output: ["sub-question 1", "sub-question 2", "sub-question 3"]
-"""
+                Example output: ["sub-question 1", "sub-question 2", "sub-question 3"]
+                """
             }],
-            temperature = 0.0,
+            temperature = 0.0, 
+            api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"),
+            custom_llm_provider = "gemini",
         )
 
         raw = response.choices[0].message.content.strip()

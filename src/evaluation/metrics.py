@@ -28,7 +28,8 @@ class RAGMetrics:
         response = completion(
             model = self.model,
             messages = [{"role": "user", "content": prompt}],
-            temperature = 0.0,
+            temperature = 0.0, api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"),
+            custom_llm_provider = "gemini",
         )
         return response.choices[0].message.content.strip()
     

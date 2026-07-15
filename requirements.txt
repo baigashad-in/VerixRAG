@@ -13,7 +13,7 @@ psycopg[binary]>=3.2.10
 rank-bm25>=0.2.2
 
 # LLM
-litellm>=1.40.0
+litellm>=1.105.0
 
 # Utilities
 numpy>=2.0.0

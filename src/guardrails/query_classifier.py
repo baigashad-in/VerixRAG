@@ -17,6 +17,7 @@ TWO APPROACHES:
 We implement both.
 """
 
+import os
 import re
 import json
 from litellm import completion
@@ -106,7 +107,7 @@ class LLMClassifier:
     list doesn't cover.
     """
 
-    def __init__(self, model: str = "groq/gemini-3.1-flash-lite",
+    def __init__(self, model: str = "gemini/gemini-3.1-flash-lite",
                  scope_description: str = None):
         self.model = model
         self.scope_description = scope_description or (
@@ -123,12 +124,14 @@ class LLMClassifier:
             messages = [{
                 "role": "user",
                 "content": f"""Determine if this query is within scope.
-Scope: {self.scope_description}
-Query: {query}
-Return ONLY JSON: {{"in_scope": true/false, "reason": "brief explanation"}}"""
-            }],
-            temperature = 0.0,
-        )
+                Scope: {self.scope_description}
+                Query: {query}
+                Return ONLY JSON: {{"in_scope": true/false, "reason": "brief explanation"}}"""
+                        }],
+                            temperature = 0.0, 
+                            api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"),
+                            custom_llm_provider = "gemini",
+                        )
 
         raw = response.choices[0].message.content.strip()
         if raw.startswith("```"):
