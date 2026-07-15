@@ -6,7 +6,7 @@ then show the RAGAS library shortcut. In interviews, knowing
 HOW faithfulness is calculated matters more than knowing which
 library to pip install.
 """
-
+import os
 from litellm import completion
 import json
 import time
