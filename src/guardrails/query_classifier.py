@@ -111,11 +111,10 @@ class LLMClassifier:
                  scope_description: str = None):
         self.model = model
         self.scope_description = scope_description or (
-                "A knowledge base containing internal documents on various topics "
-                "including software development, open source contributing guides, "
-                "security policies, governance, legal licenses, coding style guides, "
-                "DevOps tools, machine learning frameworks, and technical documentation. "
-                "A query is in-scope if it could be answered by referencing any of these documents."
+            "A knowledge base containing internal company documents including "
+            "refund policies, shipping policies, HR handbook, product manuals, "
+            "account guides, technical API documentation, and company policies. "
+            "A query is in-scope if it could be answered by referencing any of these documents."
         )
 
     def classify(self, query: str) -> dict:
