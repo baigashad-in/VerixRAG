@@ -130,9 +130,34 @@ async def lifespan(app: FastAPI):
     generator = RAGGenerator()
     detector = HallucinationDetector()
 
+    # Build scope from document filenames
+    doc_dir = os.environ.get("DOCUMENTS_DIR", "documents")
+    if os.path.isdir(doc_dir):
+        doc_names = [
+            os.path.splitext(f)[0].replace("_", " ")
+            for f in os.listdir(doc_dir)
+            if f.endswith(".md") and not f.startswith(".")
+        ]
+        scope = (
+            "A knowledge base containing internal company documents about: "
+            + ", ".join(doc_names) + ". "
+            "A query is in-scope if it could be answered by referencing any of these documents."
+        )
+    else:
+        scope = (
+            "A knowledge base containing internal company documents. "
+            "A query is in-scope if it relates to any topic that an organization "
+            "might document internally. Only reject queries that are clearly "
+            "unrelated, like jokes, math, weather, or celebrity gossip."
+        )
+
     # Full pipeline with guardrails
+    from src.guardrails.query_classifier import LLMClassifier, QueryClassifierPipeline
+    llm_classifier = LLMClassifier(scope_description=scope)
+    classifier = QueryClassifierPipeline(llm_classifier=llm_classifier)
+
     rag_pipeline = RAGPipeline(enhanced, generator, detector)
-    guarded_pipeline = GuardedRAGPipeline(rag_pipeline)
+    guarded_pipeline = GuardedRAGPipeline(rag_pipeline, classifier=classifier)
 
     app_state["pipeline"] = guarded_pipeline
     app_state["store"] = store

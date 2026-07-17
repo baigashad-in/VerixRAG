@@ -2,7 +2,7 @@
 Unified guardrails pipeline: wraps the RAG pipeline with
 input/output protection.
 
-This is what your API endpoint actually calls - not the
+This is what API endpoint actually calls - not the
 RAG pipeline directly.
 """
 
