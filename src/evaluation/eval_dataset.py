@@ -2,18 +2,17 @@
 Evaluation dataset: questions with ground truth answers.
 
 THIS IS THE FOUNDATION OF EVAL PIPELINE.
-Without ground truth, we're guessing. With it, you can
-measure exactly where your system fails.
+Without ground truth, can't
+measure exactly where system fails.
 
-HOW TO BUILD THIS IN PRACTICE: 
+HOW TO BUILD: 
 1. Write 20-50 questions the knowledge base should answer
 2. For each question, find the actual chunks that contain the answer
 3. Write the ideal answer based on those chunks
 4. Include edge cases: multi-hop questions, negations,
 out-of-scope questions
 
-It's the most valuable thing for RAG system. Every production RAG team
-maintains a dataset like this.
+Most valuable thing for RAG system.
 """
 
 from dataclasses import dataclass, field
@@ -59,16 +58,17 @@ class EvalDataset:
             for ex in self.examples
         ]
         Path(path).write_text(json.dumps(data, indent = 2))
-        print(f"Saved{len(data)} eval examples to {path}")
+        print(f"Saved {len(data)} eval examples to {path}")
 
     def load(self, path: str):
-        data = json.loads(Path(path).read_text())
+        raw = json.loads(Path(path).read_text())
+        data = raw["questions"] if isinstance(raw, dict) and "questions" in raw else raw
         self.examples = [
             EvalExample(
                 question = item["question"],
-                ground_truth_answer = item["ground_truth_answer"],
-                relevant_chunk_ids = item["relevant_chunk_ids"],
-                metadata = item.get("metadata", {})
+                ground_truth_answer = item.get("ground_truth_answer", item.get("expected_answer", "")),
+                relevant_chunk_ids = item.get("relevant_chunk_ids", []),
+                metadata = item.get("metadata", {k: v for k, v in item.items() if k not in ("question", "ground_truth_answer", "expected_answer", "relevant_chunk_ids")})
             )
             for item in data
         ]
