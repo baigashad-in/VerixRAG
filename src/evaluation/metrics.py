@@ -18,20 +18,30 @@ class RAGMetrics:
     Higher is better for all metrics.
     """
 
-    def __init__(self, model: str = "gemini/gemini-3.1-flash-lite"):
+    def __init__(self, model: str = "groq/openai/gpt-oss-120b"):
         self.model = model
         self.request_delay = 2 # seconds between LLM calls (rate limits)
 
     def _llm_call(self, prompt: str) -> str:
         """Rate-limited LLM call for evaluation."""
-        time.sleep(self.request_delay)
-        response = completion(
-            model = self.model,
-            messages = [{"role": "user", "content": prompt}],
-            temperature = 0.0, api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"),
-            custom_llm_provider = "gemini",
-        )
-        return response.choices[0].message.content.strip()
+        time.sleep(3)  # throttle to stay under 30 RPM
+        for attempt in range(5):
+            try:
+                response = completion(
+                    model="groq/openai/gpt-oss-120b",
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.0,
+                    api_key=os.environ.get("GROQ_API_KEY"),
+                )
+                return response.choices[0].message.content.strip()
+            except Exception as e:
+                if any(k in str(e).lower() for k in ["429", "timeout", "quota", "rate_limit", "ratelimit"]):
+                    wait = 2 ** attempt * 5  # 5, 10, 20, 40, 80 seconds
+                    print(f"Rate limited, waiting {wait}s (attempt {attempt+1}/5)")
+                    time.sleep(wait)
+                else:
+                    raise
+        return ""
     
     def _safe_parse_json(self, raw: str) -> dict:
         """Parse LLM JSON output safely."""
