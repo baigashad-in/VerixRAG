@@ -33,6 +33,7 @@ services:
       RERANKER_MODEL: ${RERANKER_MODEL:-cross-encoder/ms-marco-MiniLM-L-6-v2}
     volumes:
       - ./documents:/app/documents
+      - ./experiments:/app/experiments
     depends_on:
       db:
         condition: service_healthy
