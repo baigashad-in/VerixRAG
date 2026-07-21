@@ -16,7 +16,7 @@ class RAGPipeline:
         self.generator = generator
         self.hallucination_detector = hallucination_detector
 
-    def answer(self, query: str,  top_k: int = 5,
+    def answer(self, query: str,  top_k: int = 8,
                query_strategy: QueryStrategy = QueryStrategy.NONE,
                check_hallucination: bool = True) -> dict:
         
