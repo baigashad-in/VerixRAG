@@ -73,7 +73,7 @@ class EvaluationRunner:
 
             # 2. Get the retrieved contexts (chunk contents)
             retrieval_results = self.pipeline.retriever.retrieve(
-                query = example.question, top_k = 5
+                query = example.question, top_k = 8
             )
 
             contexts = [r.content for r in retrieval_results]
