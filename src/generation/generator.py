@@ -274,7 +274,8 @@ Cite each claim with [Source N]."""
         response = self._call_with_swap(messages)
         
         answer = response.choices[0].message.content.strip()
-
+        print("RAW LLM OUTPUT:", repr(answer), flush=True)
+        
         # Post-process: strip uncited sentences
         answer = self._enforce_citations(answer)
         
