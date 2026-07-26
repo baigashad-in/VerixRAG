@@ -95,7 +95,7 @@ class HallucinationDetector:
     
     def check_citation_coverage(self, answer: str, num_sources: int) -> dict:
         
-        sentences = [s.strip() for s in re.split(r'[.!?]+', answer) 
+        sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+(?!\[Source)', answer) 
                      if s.strip()]
         
         cited = 0

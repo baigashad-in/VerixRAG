@@ -157,7 +157,7 @@ class RAGGenerator:
     
     def _enforce_citations(self, answer: str) -> str:
         """Post-processing: strip sentences that have no citation."""
-        parts = re.split(r'(?<=[.!?])\s+', answer)
+        parts = re.split(r'(?<=[.!?])\s+(?!\[Source)', answer)
         
         kept = []
         stripped_count = 0
@@ -273,8 +273,7 @@ Cite each claim with [Source N]."""
         
         response = self._call_with_swap(messages)
         
-        answer = response.choices[0].message.content.strip()
-        print("RAW LLM OUTPUT:", repr(answer), flush=True)
+        answer = response.choices[0].message.content.replace("\u202f", " ").strip()
         
         # Post-process: strip uncited sentences
         answer = self._enforce_citations(answer)
