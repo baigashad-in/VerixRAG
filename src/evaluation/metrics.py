@@ -23,26 +23,40 @@ class RAGMetrics:
         self.request_delay = 2 # seconds between LLM calls (rate limits)
 
     def _llm_call(self, prompt: str) -> str:
-        """Rate-limited LLM call for evaluation."""
-        time.sleep(3)  # throttle to stay under 30 RPM
-        for attempt in range(5):
+        keys = [v for k, v in sorted(os.environ.items())
+                if k.startswith("GROQ_API_KEY") and v]
+        if not keys:
+            raise RuntimeError("No GROQ_API_KEY* found in environment")
+        if not hasattr(self, "_key_idx"):
+            self._key_idx = 0
+
+        time.sleep(4)  # light throttle; rotation handles the rest
+        last_err = None
+        for attempt in range(len(keys) * 3):
+            key = keys[self._key_idx % len(keys)]
             try:
                 response = completion(
-                    model="groq/openai/gpt-oss-120b",
+                    model=os.environ.get("JUDGE_MODEL", "groq/openai/gpt-oss-20b"),
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.0,
-                    api_key=os.environ.get("GROQ_API_KEY"),
+                    api_key=key,
                 )
                 return response.choices[0].message.content.strip()
             except Exception as e:
-                if any(k in str(e).lower() for k in ["429", "timeout", "quota", "rate_limit", "ratelimit"]):
-                    wait = 2 ** attempt * 5  # 5, 10, 20, 40, 80 seconds
-                    print(f"Rate limited, waiting {wait}s (attempt {attempt+1}/5)")
-                    time.sleep(wait)
-                else:
+                last_err = e
+                msg = str(e).lower()
+                if not any(t in msg for t in ["429", "rate", "quota", "timeout", "limit"]):
                     raise
-        return ""
-    
+                print(f"Judge key #{self._key_idx % len(keys) + 1} failed: "
+                      f"{type(e).__name__}: {str(e)[:200]}", flush=True)
+                self._key_idx += 1
+                # After every full pass over all keys, back off
+                if (attempt + 1) % len(keys) == 0:
+                    wait = 15 * ((attempt + 1) // len(keys))
+                    print(f"All {len(keys)} keys limited, waiting {wait}s", flush=True)
+                    time.sleep(wait)
+        raise RuntimeError(f"LLM judge failed on all keys: {last_err}")
+
     def _safe_parse_json(self, raw: str) -> dict:
         """Parse LLM JSON output safely."""
         clean = raw.strip()
@@ -84,8 +98,10 @@ class RAGMetrics:
                     Retrun ONLY a JSON array, example: ["Claim 1", "Claim 2"]""")
         
         parsed = self._safe_parse_json(claims_raw)
-        if not isinstance(parsed, list) or not parsed:
-            return 0.0
+        if isinstance(parsed, list) and not parsed:
+            return 1.0  # no claims -> nothing unsupported
+        if not isinstance(parsed, list):
+            return 0.0  # judge returned garbage
         
         claims = [str(c) for c in parsed[:20]]
 
