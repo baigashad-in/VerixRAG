@@ -11,6 +11,10 @@ from litellm import completion
 import json
 import time
 
+class JudgeError(Exception):
+    """Judge reply missing or not parseable."""
+
+
 class RAGMetrics:
     """Calculate retrieval and generation quality metrics.
     
@@ -39,9 +43,18 @@ class RAGMetrics:
                     model=os.environ.get("JUDGE_MODEL", "groq/openai/gpt-oss-20b"),
                     messages=[{"role": "user", "content": prompt}],
                     temperature=0.0,
+                    reasoning_effort="low",
+                    max_tokens=2048,
                     api_key=key,
                 )
-                return response.choices[0].message.content.strip()
+                text = (response.choices[0].message.content or "").strip()
+                if not hasattr(self, "trace"):
+                    self.trace = []
+                self.trace.append(text[:1500])
+                if text:
+                    return text
+                print("Judge returned empty content, retrying", flush=True)
+                continue
             except Exception as e:
                 last_err = e
                 msg = str(e).lower()
@@ -99,9 +112,9 @@ class RAGMetrics:
         
         parsed = self._safe_parse_json(claims_raw)
         if isinstance(parsed, list) and not parsed:
-            return 1.0  # no claims -> nothing unsupported
+            return None  # no claims (refusal) - counted separately
         if not isinstance(parsed, list):
-            return 0.0  # judge returned garbage
+            raise JudgeError("claims extraction not a JSON list")
         
         claims = [str(c) for c in parsed[:20]]
 
@@ -123,10 +136,11 @@ class RAGMetrics:
 
         verdicts = self._safe_parse_json(verification_raw)
         if not verdicts:
-            return 0.0
+            raise JudgeError("claim verification not parseable")
         
         supported = sum(1 for v in verdicts.values() if v is True)
         total = len(verdicts)
+        self.last_claims = (supported, total)
 
         return supported / total if total > 0 else 0.0
     
@@ -165,7 +179,7 @@ class RAGMetrics:
 
         generated = self._safe_parse_json(generated_raw)
         if not isinstance(generated, list) or not generated:
-            return 0.0
+            raise JudgeError("reverse questions not parseable")
         
         # Score similarity between generated and original question
 
@@ -180,7 +194,7 @@ class RAGMetrics:
 
         scores = self._safe_parse_json(score_raw)
         if not isinstance(scores, list) or not scores:
-            return 0.0
+            raise JudgeError("similarity scores not parseable")
         
         valid_scores = []
         for s in scores:
@@ -238,7 +252,9 @@ class RAGMetrics:
             Return ONLLY JSON: {{"relevant": true}} or {{"relevant": false}}""")
              
              judgement = self._safe_parse_json(judgement_raw)
-             is_relevant = judgement.get("relevant", False)
+             if not isinstance(judgement, dict) or "relevant" not in judgement:
+                 raise JudgeError("relevance judgement not parseable")
+             is_relevant = judgement["relevant"] is True
              relevance.append(is_relevant)
 
         # Calculate Mean Average Precision
@@ -282,7 +298,7 @@ class RAGMetrics:
 
         statements = self._safe_parse_json(statements_raw)
         if not isinstance(statements, list) or not statements:
-            return 0.0
+            raise JudgeError("ground-truth statements not parseable")
 
         context_text = "\n\n".join(
             f"Context {i+1}: {c[:2000]}"
@@ -304,7 +320,7 @@ class RAGMetrics:
 
         coverage = self._safe_parse_json(coverage_raw)
         if not coverage:
-            return 0.0
+            raise JudgeError("coverage verdicts not parseable")
         
         covered = sum(1 for v in coverage.values() if v is True)
         total = len(coverage)

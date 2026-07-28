@@ -1,182 +1,188 @@
 """
-Evaluation runner - measures RAG pipeline end-to-end.
+Evaluation runner - measures the RAG pipeline end-to-end.
 
-This is the script that tells you: "your system scores 0.85
-faithfulness, 0.79 answer relevancy, 0.72 context precision,
-0.68 context recall." Those numbers drive every decision about
-chunking strategy, embedding model, retrieval parameters. 
+Every score in the report is traceable: each example stores the
+generated answer, the chunks it was judged against, and the raw
+judge replies. Judge failures and refusals are counted separately
+instead of being folded into the averages as 0.0.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Optional
 import json
 import time
 from pathlib import Path
 from datetime import datetime
 
+from .metrics import JudgeError
+
+METRICS = ("faithfulness", "answer_relevancy", "context_precision", "context_recall")
+
+
 @dataclass
 class EvalResult:
-    """Results for a single evaluation example."""
     question: str
+    category: str
     generated_answer: str
     ground_truth: str
     retrieved_contexts: list[str]
-    faithfulness: float
-    answer_relevancy: float
-    context_precision: float
-    context_recall: float
+    contexts_source: str
+    scores: dict = field(default_factory=dict)        # metric -> float or None
+    judge_errors: dict = field(default_factory=dict)  # metric -> error text
+    judge_raw: dict = field(default_factory=dict)     # metric -> raw judge replies
+    claims: Optional[tuple] = None                    # (supported, total)
+
 
 class EvaluationRunner:
-    """Run RAGAS evaluation against pipeline.
-    
-    WORKFLOW:
-    1. Load eval dataset (questions + ground truth)
-    2. For each question, run it through pipeline
-    3. Score the pipeline's output on all 4 metrics
-    4. Aggregate scores and save report
-    """
     def __init__(self, rag_pipeline, metrics, eval_dataset):
-        """
-        Args:
-            rag_pipeline: your RAGPipeline instance
-            metrics: RAGMetrics instance
-            eval_dataset: EvalDataset with ground truth
-        """
         self.pipeline = rag_pipeline
         self.metrics = metrics
         self.dataset = eval_dataset
 
+    def _contexts_from_output(self, output: dict):
+        """Use the chunks the generator actually saw, if the pipeline returns them."""
+        for key in ("retrieval_results", "sources", "contexts", "chunks"):
+            val = output.get(key)
+            if isinstance(val, list) and val:
+                first = val[0]
+                if hasattr(first, "content"):
+                    return [r.content for r in val], f"pipeline:{key}"
+                if isinstance(first, dict) and "content" in first:
+                    return [r["content"] for r in val], f"pipeline:{key}"
+        return None, None
+
+    def _score(self, fn, *args):
+        self.metrics.trace = []
+        self.metrics.last_claims = None
+        try:
+            value, error = fn(*args), None
+        except Exception as e:  # judge failure, rate limit, anything
+            value, error = None, f"{type(e).__name__}: {e}"[:300]
+        return value, error, list(self.metrics.trace)
+
     def run(self, config_label: str = "default") -> dict:
-        """Evaluate the pipeline on all examples.
-        Args:
-            config_label: name for this experiment run, e.g.
-                "recursive_512_bge" or "fixed_256_minilm"
-                Used to compare different configurations.
-            """
         results = []
-        start_time = time.time()
+        start = time.time()
+        n = len(self.dataset.examples)
+        print(f"\nRunning evaluation: {config_label} ({n} examples)", flush=True)
 
-        print(f"\nRunning evaluation: {config_label}")
-        print(f"Examples: {len(self.dataset.examples)}")
-        print("-" * 50)
+        for i, ex in enumerate(self.dataset.examples):
+            print(f"\n[{i+1}/{n}] {ex.question[:60]}", flush=True)
+            output = self.pipeline.answer(query=ex.question, check_hallucination=False)
+            answer = output.get("answer", "")
 
-        for i, example in enumerate(self.dataset.examples):
-            print(f"\n[{i+1}/{len(self.dataset.examples)}]"
-                  f"{example.question[:60]}...")
-            
-            # 1. Run the pipeline
-            pipeline_output = self.pipeline.answer(
-                query = example.question,
-                check_hallucination = False, # we measure this ourselves
+            contexts, source = self._contexts_from_output(output)
+            if contexts is None:
+                retrieved = self.pipeline.retriever.retrieve(query=ex.question, top_k=8)
+                contexts, source = [r.content for r in retrieved], "re-retrieved"
+
+            r = EvalResult(
+                question=ex.question,
+                category=(ex.metadata or {}).get("category", "unknown"),
+                generated_answer=answer,
+                ground_truth=ex.ground_truth_answer,
+                retrieved_contexts=contexts,
+                contexts_source=source,
             )
 
-            answer = pipeline_output["answer"]
+            jobs = {
+                "faithfulness": (self.metrics.faithfulness, answer, contexts),
+                "answer_relevancy": (self.metrics.answer_relevancy, ex.question, answer),
+                "context_precision": (self.metrics.context_precision, ex.question,
+                                      contexts, ex.ground_truth_answer),
+                "context_recall": (self.metrics.context_recall,
+                                   ex.ground_truth_answer, contexts),
+            }
+            for name, (fn, *args) in jobs.items():
+                value, error, raw = self._score(fn, *args)
+                r.scores[name] = value
+                r.judge_raw[name] = raw
+                if error:
+                    r.judge_errors[name] = error
+                if name == "faithfulness":
+                    r.claims = getattr(self.metrics, "last_claims", None)
+                shown = "FAILED" if error else ("n/a" if value is None else f"{value:.3f}")
+                print(f"  {name}: {shown}", flush=True)
 
-            # 2. Get the retrieved contexts (chunk contents)
-            retrieval_results = self.pipeline.retriever.retrieve(
-                query = example.question, top_k = 8
-            )
+            results.append(r)
 
-            contexts = [r.content for r in retrieval_results]
-
-            # 3. Score on all 4 metrics
-            faith = self.metrics.faithfulness(answer, contexts)
-            print(f" Faithfulness: {faith:.3f}")
-
-            relevancy = self.metrics.answer_relevancy(
-                example.question, answer
-            )
-            print(f" Answer Relevancy: {relevancy:.3f}")
-
-            precision = self.metrics.context_precision(
-                example.question, contexts,
-                example.ground_truth_answer
-            )
-            print(f" Context Precision: {precision:.3f}")
-
-            recall = self.metrics.context_recall(
-                example.ground_truth_answer, contexts
-            )
-            print(f" Context Recall: {recall:.3f}")
-
-            results.append(EvalResult(
-                question = example.question,
-                generated_answer = answer,
-                ground_truth = example.ground_truth_answer,
-                retrieved_contexts = contexts,
-                faithfulness = faith,
-                answer_relevancy = relevancy,
-                context_precision = precision,
-                context_recall = recall,
-            ))
-
-        elapsed = time.time() - start_time
-
-        # 4. Aggregate
-        report = self._build_report(results, config_label, elapsed)
+        report = self._build_report(results, config_label, time.time() - start)
         self._print_report(report)
-
         return report
-        
-    def _build_report(self, results: list[EvalResult],
-                      config_label: str, elapsed: float) -> dict:
-        """Aggregate individual scores into a summary report."""
-        n = len(results)
-        if n == 0:
-            return {"error": "no results"}
-        
-        report = {
+
+    def _build_report(self, results, config_label, elapsed) -> dict:
+        def mean(vals):
+            vals = [v for v in vals if v is not None]
+            return round(sum(vals) / len(vals), 4) if vals else None
+
+        in_scope = [r for r in results if r.category not in ("out_of_scope",)]
+        out_scope = [r for r in results if r.category == "out_of_scope"]
+
+        supported = sum(r.claims[0] for r in in_scope if r.claims)
+        total = sum(r.claims[1] for r in in_scope if r.claims)
+        refused = [r for r in in_scope
+                   if r.scores.get("faithfulness") is None
+                   and "faithfulness" not in r.judge_errors]
+
+        in_scope_means = {m: mean(r.scores.get(m) for r in in_scope) for m in METRICS}
+
+        return {
             "config": config_label,
             "timestamp": datetime.now().isoformat(),
-            "num_examples": n,
+            "num_examples": len(results),
             "elapsed_seconds": round(elapsed, 1),
-            "aggregate": {
-                "faithfulness": round(
-                    sum(r.faithfulness for r in results) / n, 4
-                ),
-                "answer_relevancy": round(
-                    sum(r.answer_relevancy for r in results) / n, 4
-                ),
-                "context_precision": round(
-                    sum(r.context_precision for r in results) / n, 4
-                ),
-                "context_recall": round(
-                    sum(r.context_recall for r in results) / n, 4
-                ),
+            "in_scope": {
+                "n": len(in_scope),
+                "hallucination_rate": round(1 - supported / total, 4) if total else None,
+                "claims_supported": supported,
+                "claims_total": total,
+                "answered": len(in_scope) - len(refused),
+                "refused": len(refused),
+                **in_scope_means,
+                "scored_counts": {m: sum(1 for r in in_scope if r.scores.get(m) is not None)
+                                  for m in METRICS},
             },
+            "out_of_scope": {
+                "n": len(out_scope),
+                "refused": sum(1 for r in out_scope if r.scores.get("faithfulness") is None
+                               and "faithfulness" not in r.judge_errors),
+            },
+            "judge_failures": sum(len(r.judge_errors) for r in results),
+            "contexts_re_retrieved": sum(1 for r in results if r.contexts_source == "re-retrieved"),
+            "aggregate": in_scope_means,  # kept for compatibility
             "per_example": [
                 {
                     "question": r.question,
-                    "faithfulness": r.faithfulness,
-                    "answer_relevancy": r.answer_relevancy,
-                    "context_precision": r.context_precision,
-                    "context_recall": r.context_recall,
+                    "category": r.category,
+                    "answer": r.generated_answer,
+                    "contexts_source": r.contexts_source,
+                    "contexts": [c[:600] for c in r.retrieved_contexts],
+                    "scores": r.scores,
+                    "claims": r.claims,
+                    "judge_errors": r.judge_errors,
+                    "judge_raw": r.judge_raw,
                 }
                 for r in results
             ],
         }
-        return report
-    
+
     def _print_report(self, report: dict):
-        """Print a readable summary."""
-        agg = report["aggregate"]
-        print(f"\n{'='*50}")
-        print(f"EVALUATION REPORT:  {report['config']}")
-        print(f"{'='*50}")
-        print(f"Examples:           {report['num_examples']}")
-        print(f"Time:               {report['elapsed_seconds']}s")
-        print(f"")
-        print(f"Faithfulness:       {agg['faithfulness']:.4f}")
-        print(f"Answer Relevancy:   {agg['answer_relevancy']:.4f}")
-        print(f"Context Precision:  {agg['context_precision']:.4f}")
-        print(f"Context Recall:     {agg['context_recall']:.4f}")
-        print(f"{'='*50}")
+        s = report["in_scope"]
+        print(f"\n{'='*50}\nEVALUATION REPORT: {report['config']}\n{'='*50}")
+        print(f"Examples: {report['num_examples']}   Time: {report['elapsed_seconds']}s")
+        print(f"In-scope: {s['n']}  answered: {s['answered']}  refused: {s['refused']}")
+        print(f"Hallucination rate: {s['hallucination_rate']}  "
+              f"({s['claims_supported']}/{s['claims_total']} claims supported)")
+        for m in METRICS:
+            print(f"{m:<20} {s[m]}  (scored {s['scored_counts'][m]}/{s['n']})")
+        print(f"Out-of-scope refused: {report['out_of_scope']['refused']}/{report['out_of_scope']['n']}")
+        print(f"Judge failures: {report['judge_failures']}   "
+              f"Re-retrieved contexts: {report['contexts_re_retrieved']}")
+        print("=" * 50, flush=True)
 
     def save_report(self, report: dict, directory: str = "./experiments"):
-        """Save report to JSON for later comparison."""
-        Path(directory).mkdir(parents = True, exist_ok = True)
-
-        filename = f"{report['config']}_{report['timestamp'][:10]}.json"
-        filepath = Path(directory) / filename
-
-        filepath.write_text(json.dumps(report, indent = 2))
-        print(f"Report saved : {filepath}")
+        Path(directory).mkdir(parents=True, exist_ok=True)
+        stamp = report["timestamp"][:19].replace(":", "-")
+        filepath = Path(directory) / f"{report['config']}_{stamp}.json"
+        filepath.write_text(json.dumps(report, indent=2))
+        print(f"Report saved: {filepath}")
