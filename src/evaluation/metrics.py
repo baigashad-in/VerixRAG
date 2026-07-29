@@ -104,7 +104,7 @@ class RAGMetrics:
         # Step 1: Extract claims
         claims_raw = self._llm_call(f"""Extract every factual claim
                                     from this answer as a JSON array of strings.
-                    Each claim should be a single, atomic statement.
+                    Each claim should be a single, atomic statement. Do not include statements about what the sources or documents do or do not contain.
                     
                     Answer: {answer}
 

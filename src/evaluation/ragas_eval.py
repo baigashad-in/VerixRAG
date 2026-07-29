@@ -18,6 +18,9 @@ from .metrics import JudgeError
 
 METRICS = ("faithfulness", "answer_relevancy", "context_precision", "context_recall")
 
+import re
+REFUSAL = re.compile(r"(don't|do not) have enough information|could(n't| not) find any relevant", re.I)
+
 
 @dataclass
 class EvalResult:
@@ -27,6 +30,7 @@ class EvalResult:
     ground_truth: str
     retrieved_contexts: list[str]
     contexts_source: str
+    outcome: str = "answered"   # answered | refused | empty
     scores: dict = field(default_factory=dict)        # metric -> float or None
     judge_errors: dict = field(default_factory=dict)  # metric -> error text
     judge_raw: dict = field(default_factory=dict)     # metric -> raw judge replies
@@ -68,7 +72,7 @@ class EvaluationRunner:
 
         for i, ex in enumerate(self.dataset.examples):
             print(f"\n[{i+1}/{n}] {ex.question[:60]}", flush=True)
-            output = self.pipeline.answer(query=ex.question, check_hallucination=False)
+            output = self.pipeline.answer(query=ex.question, check_hallucination=False, return_chunks=True)
             answer = output.get("answer", "")
 
             contexts, source = self._contexts_from_output(output)
@@ -85,6 +89,11 @@ class EvaluationRunner:
                 contexts_source=source,
             )
 
+            if not answer.strip():
+                r.outcome = "empty"
+            elif REFUSAL.search(answer):
+                r.outcome = "refused"
+
             jobs = {
                 "faithfulness": (self.metrics.faithfulness, answer, contexts),
                 "answer_relevancy": (self.metrics.answer_relevancy, ex.question, answer),
@@ -94,6 +103,10 @@ class EvaluationRunner:
                                    ex.ground_truth_answer, contexts),
             }
             for name, (fn, *args) in jobs.items():
+                if r.outcome in ("empty", "refused") and name in ("faithfulness", "answer_relevancy"):
+                    r.scores[name] = None
+                    print(f"  {name}: skipped ({r.outcome})", flush=True)
+                    continue
                 value, error, raw = self._score(fn, *args)
                 r.scores[name] = value
                 r.judge_raw[name] = raw
@@ -120,9 +133,8 @@ class EvaluationRunner:
 
         supported = sum(r.claims[0] for r in in_scope if r.claims)
         total = sum(r.claims[1] for r in in_scope if r.claims)
-        refused = [r for r in in_scope
-                   if r.scores.get("faithfulness") is None
-                   and "faithfulness" not in r.judge_errors]
+        refused = [r for r in in_scope if r.outcome == "refused"]
+        empty = [r for r in in_scope if r.outcome == "empty"]
 
         in_scope_means = {m: mean(r.scores.get(m) for r in in_scope) for m in METRICS}
 
@@ -136,16 +148,16 @@ class EvaluationRunner:
                 "hallucination_rate": round(1 - supported / total, 4) if total else None,
                 "claims_supported": supported,
                 "claims_total": total,
-                "answered": len(in_scope) - len(refused),
+                "answered": sum(1 for r in in_scope if r.outcome == "answered"),
                 "refused": len(refused),
+                "empty": len(empty),
                 **in_scope_means,
                 "scored_counts": {m: sum(1 for r in in_scope if r.scores.get(m) is not None)
                                   for m in METRICS},
             },
             "out_of_scope": {
                 "n": len(out_scope),
-                "refused": sum(1 for r in out_scope if r.scores.get("faithfulness") is None
-                               and "faithfulness" not in r.judge_errors),
+                "refused": sum(1 for r in out_scope if r.outcome == "refused"),
             },
             "judge_failures": sum(len(r.judge_errors) for r in results),
             "contexts_re_retrieved": sum(1 for r in results if r.contexts_source == "re-retrieved"),
@@ -154,6 +166,7 @@ class EvaluationRunner:
                 {
                     "question": r.question,
                     "category": r.category,
+                    "outcome": r.outcome,
                     "answer": r.generated_answer,
                     "contexts_source": r.contexts_source,
                     "contexts": [c[:600] for c in r.retrieved_contexts],
@@ -170,7 +183,7 @@ class EvaluationRunner:
         s = report["in_scope"]
         print(f"\n{'='*50}\nEVALUATION REPORT: {report['config']}\n{'='*50}")
         print(f"Examples: {report['num_examples']}   Time: {report['elapsed_seconds']}s")
-        print(f"In-scope: {s['n']}  answered: {s['answered']}  refused: {s['refused']}")
+        print(f"In-scope: {s['n']}  answered: {s['answered']}  refused: {s['refused']}  empty: {s['empty']}")
         print(f"Hallucination rate: {s['hallucination_rate']}  "
               f"({s['claims_supported']}/{s['claims_total']} claims supported)")
         for m in METRICS:

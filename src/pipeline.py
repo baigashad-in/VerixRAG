@@ -18,7 +18,8 @@ class RAGPipeline:
 
     def answer(self, query: str,  top_k: int = 8,
                query_strategy: QueryStrategy = QueryStrategy.NONE,
-               check_hallucination: bool = True) -> dict:
+               check_hallucination: bool = True,
+               return_chunks: bool = False) -> dict:
         
         results = self.retriever.retrieve(
             query = query,
@@ -62,6 +63,7 @@ class RAGPipeline:
                 for c in response.citations
             ],
             "retrieval_results": len(results),
+            **({"chunks": results} if return_chunks else {}),
             "hallucination_check": hallucination_check,
             "query_strategy": query_strategy.value,
             "model": response.model,

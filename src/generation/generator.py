@@ -155,42 +155,57 @@ class RAGGenerator:
     ]
     _COMPILED_SAFE = [re.compile(p, re.IGNORECASE) for p in _SAFE_PATTERNS]
     
+    _CITATION_RE = re.compile(
+        r"[\[\(\u3010]\s*sources?\s*\d+(?:\s*(?:,|;|&|and|-|\u2013|sources?)\s*\d+)*\s*[\]\)\u3010\u3011]",
+        re.IGNORECASE,
+    )
+    _LIST_ITEM_RE = re.compile(r"^\s*(?:[-*\u2022]|\d+[.)])\s+", re.MULTILINE)
+
     def _enforce_citations(self, answer: str) -> str:
-        """Post-processing: strip sentences that have no citation."""
-        parts = re.split(r'(?<=[.!?])\s+(?!\[Source)', answer)
-        
-        kept = []
-        stripped_count = 0
-        
-        for part in parts:
-            part = part.strip()
-            if not part:
+        """Strip uncited sentences, but never empty the answer.
+
+        - Recognises [Source 1], [Source 1, 3], [Sources 1 and 2], (Source 1), ...
+        - Treats a list block as one unit: kept if it cites anywhere.
+        - Logs the text of every stripped sentence.
+        - If stripping would remove everything, returns the original answer.
+        """
+        kept_blocks, stripped = [], []
+
+        for block in re.split(r"\n\s*\n", answer.strip()):
+            block = block.strip()
+            if not block:
                 continue
-            
-            # Always keep sentences with citations
-            if re.search(r'\[Source[\s\d,]+\]', part):
-                kept.append(part)
+
+            if self._LIST_ITEM_RE.search(block):
+                if self._CITATION_RE.search(block):
+                    kept_blocks.append(block)
+                else:
+                    stripped.append(block)
                 continue
-            
-            # Keep short filler (under 8 words)
-            if len(part.split()) < 8:
-                kept.append(part)
-                continue
-            
-            # Keep disclaimers
-            is_safe = any(p.search(part) for p in self._COMPILED_SAFE)
-            if is_safe:
-                kept.append(part)
-                continue
-            
-            # This is an uncited claim — strip it
-            stripped_count += 1
-        
-        if stripped_count > 0:
-            print(f"  _enforce_citations: stripped {stripped_count} uncited sentence(s)")
-        
-        return " ".join(kept)
-    
+
+            kept = []
+            for part in re.split(r"(?<=[.!?])\s+(?![\[\(\u3010]\s*[Ss]ource)", block):
+                part = part.strip()
+                if not part:
+                    continue
+                if (self._CITATION_RE.search(part)
+                        or len(part.split()) < 8
+                        or any(p.search(part) for p in self._COMPILED_SAFE)):
+                    kept.append(part)
+                else:
+                    stripped.append(part)
+            if kept:
+                kept_blocks.append(" ".join(kept))
+
+        for s in stripped:
+            print("  _enforce_citations: stripped:", repr(s[:150]), flush=True)
+
+        if not kept_blocks:
+            print("  _enforce_citations: would strip everything, keeping original", flush=True)
+            return answer.strip()
+
+        return "\n\n".join(kept_blocks)
+
     def _call_with_swap(self, messages: list, max_retries: int = 3):
         """Call LLM with automatic Groq key swap on rate limit."""
         import os, time
@@ -273,7 +288,7 @@ Cite each claim with [Source N]."""
         
         response = self._call_with_swap(messages)
         
-        answer = response.choices[0].message.content.replace("\u202f", " ").strip()
+        answer = response.choices[0].message.content.replace("\u202f", " ").replace("\u3010", "[").replace("\u3011", "]").strip()
         
         # Post-process: strip uncited sentences
         answer = self._enforce_citations(answer)
