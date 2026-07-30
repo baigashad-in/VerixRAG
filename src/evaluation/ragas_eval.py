@@ -160,6 +160,7 @@ class EvaluationRunner:
                 "refused": sum(1 for r in out_scope if r.outcome == "refused"),
             },
             "judge_failures": sum(len(r.judge_errors) for r in results),
+            "judge_tokens": getattr(self.metrics, "tokens_used", None),
             "contexts_re_retrieved": sum(1 for r in results if r.contexts_source == "re-retrieved"),
             "aggregate": in_scope_means,  # kept for compatibility
             "per_example": [

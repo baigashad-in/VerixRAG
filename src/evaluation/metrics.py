@@ -48,6 +48,8 @@ class RAGMetrics:
                     api_key=key,
                 )
                 text = (response.choices[0].message.content or "").strip()
+                usage = getattr(response, "usage", None)
+                self.tokens_used = getattr(self, "tokens_used", 0) + (getattr(usage, "total_tokens", 0) or 0)
                 if not hasattr(self, "trace"):
                     self.trace = []
                 self.trace.append(text[:1500])
@@ -211,65 +213,45 @@ class RAGMetrics:
     def context_precision(self, question: str,
                           retrieved_contexts: list[str],
                           ground_truth: str) -> float:
-         """Are relevant chunks ranked at the TOP of results?
-         
-         HOW IT WORKS:
-         1. For each retrieved chunk, check if it's relevant to
-         answering the question (givien ground truth)
-         2. Calculate precision at each rank position
-         3. Average the precision values (only at relevant positions)
+        """Are relevant chunks ranked at the TOP of results? (Mean Average Precision)
 
-         This is Mean Average Precision - the standard IR metric.
+        One judge call rates every chunk at once, instead of one call per chunk.
+        Precision@k is averaged over the ranks where a relevant chunk appears.
 
-         EXAMPLE:
-         Retrieved: [irrelevant, RELEVANT, irrelevant, RELEVANT, irrelevant]
-         Relevant: position 2 and 4
-
-         Precision@2 = 1/2 = 0.5 (1 relevant in top 2)
-         Precision@4 = 2/4 = 0.5 (2 relevant in top 4)
-
-         Context Precision = (0.5 + 0.5) / 2 = 0.5
-
-         If the relevant chunks were at positions 1 and 2:
-         Precision@1 = 1/1 = 1.0
-         Precision@2 = 2/2 = 1.0
-         Context Precision = 1.0 <- perfect ranking
-         """
-
-         if not retrieved_contexts:
+        EXAMPLE:
+        Relevance by rank: [no, YES, no, YES, no]
+        P@2 = 1/2, P@4 = 2/4  ->  context precision = (0.5 + 0.5) / 2 = 0.5
+        """
+        if not retrieved_contexts:
             return 0.0
-         
-         # Judge each chunk's relevance
-         relevance = []
-         for i, ctx in enumerate(retrieved_contexts[:10]):
-             judgement_raw = self._llm_call(f"""Is this context relevant
-            to answering the question? Consider the fround truth answer.
-                                            
-            Question: {question}
-            Ground truth answer: {ground_truth}
-            Context to judge: {ctx[:2000]}
 
-            Return ONLLY JSON: {{"relevant": true}} or {{"relevant": false}}""")
-             
-             judgement = self._safe_parse_json(judgement_raw)
-             if not isinstance(judgement, dict) or "relevant" not in judgement:
-                 raise JudgeError("relevance judgement not parseable")
-             is_relevant = judgement["relevant"] is True
-             relevance.append(is_relevant)
+        contexts = retrieved_contexts[:10]
+        numbered = "\n\n".join(
+            f"Context {i+1}: {c[:2000]}" for i, c in enumerate(contexts)
+        )
+        raw = self._llm_call(f"""For each numbered context below, decide whether it
+        is relevant to answering the question, given the ground truth answer.
 
-        # Calculate Mean Average Precision
-         relevant_count = 0
-         precision_sum = 0.0
-    
-         for i, is_rel in enumerate(relevance):
-            if is_rel:
+        Question: {question}
+        Ground truth answer: {ground_truth}
+
+        {numbered}
+
+        Return ONLY a JSON array of exactly {len(contexts)} booleans, one per
+        context in order, example: [true, false, true]""")
+
+        verdicts = self._safe_parse_json(raw)
+        if not isinstance(verdicts, list) or len(verdicts) != len(contexts):
+            raise JudgeError(
+                f"expected {len(contexts)} relevance verdicts, got {repr(verdicts)[:120]}"
+            )
+
+        relevant_count, precision_sum = 0, 0.0
+        for i, verdict in enumerate(verdicts):
+            if verdict is True:
                 relevant_count += 1
-                precision_at_i = relevant_count / (i + 1)
-                precision_sum += precision_at_i
-
-         if relevant_count == 0:
-            return 0.0
-         return precision_sum / relevant_count
+                precision_sum += relevant_count / (i + 1)
+        return precision_sum / relevant_count if relevant_count else 0.0
 
     # -- METRIC 4: CONTEXT RECALL --
 

@@ -125,10 +125,14 @@ class RAGGenerator:
                 10. Never include background, context, or summary sentences that 
                 are not directly supported by a specific source. If you cannot 
                 point to a [Source N] for a sentence, leave it out.
-                11. If a question asks about something not covered in the sources,
-                respond ONLY with: "I don't have enough information in the
-                available documents to fully answer this question." Do NOT
-                guess, infer, or extrapolate beyond what sources explicitly state.
+                11. If the sources answer the question fully or in part, answer with
+                    what they state and cite it. If part of the question is not covered,
+                    answer the covered part and add one sentence saying which part the
+                    documents do not cover. Respond ONLY with "I don't have enough
+                    information in the available documents to answer this question."
+                    when none of the sources contain information relevant to the question.
+                    Never guess, infer consequences, or extrapolate beyond what the
+                    sources explicitly state.
                 12. NEVER combine information from sources with your own knowledge.
                 If sources mention topic A but the question asks about A+B,
                 answer ONLY about A and state that B is not covered.
