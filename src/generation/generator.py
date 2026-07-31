@@ -293,6 +293,7 @@ Cite each claim with [Source N]."""
         response = self._call_with_swap(messages)
         
         answer = response.choices[0].message.content.replace("\u202f", " ").replace("\u3010", "[").replace("\u3011", "]").strip()
+        answer = re.sub(r"\[(\d+)\]", r"[Source \1]", answer)
         
         # Post-process: strip uncited sentences
         answer = self._enforce_citations(answer)
