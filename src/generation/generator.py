@@ -1,12 +1,6 @@
 """
 LLM response generation with citation grounding.
 
-THE CRITICAL DIFFERENCE between a toy RAG and production RAG:
-- Toy: "Here's some context. Answer the question."
-- Production: "Here are numbered sources. Answer the question. 
-  Cite your sources with [1], [2], etc. If the sources don't 
-  contain the answer, say so."
-
 Citation grounding:
 1. Reduces hallucination - the LLM is told to ONLY use provided sources
 2. Builds trust - users can verify claims
@@ -15,6 +9,7 @@ Citation grounding:
 
 from dataclasses import dataclass, field
 from litellm import completion
+from src.observability.tracing import current_trace, span
 import re
 
 
@@ -35,6 +30,7 @@ class GeneratedResponse:
     query: str
     model: str
     retrieval_results: list   # raw retrieval results for debugging
+    usage: dict = field(default_factory=dict)  # prompt/completion tokens
 
 
 class RAGGenerator:
@@ -278,30 +274,52 @@ class RAGGenerator:
                 {
                     "role": "user",
                     "content": f"""<SOURCES>
-{context}
-</SOURCES>
+                                    {context}
+                                    </SOURCES>
 
-<USER_QUERY>
-Question: {query}
-</USER_QUERY>
+                                    <USER_QUERY>
+                                    Question: {query}
+                                    </USER_QUERY>
 
-Answer the question using ONLY the sources above. 
-Cite each claim with [Source N]."""
+                                    Answer the question using ONLY the sources above. 
+                                    Cite each claim with [Source N]."""
                 }
             ]
         
-        response = self._call_with_swap(messages)
-        
-        answer = response.choices[0].message.content.replace("\u202f", " ").replace("\u3010", "[").replace("\u3011", "]").strip()
+        with span("generation.llm", model=self.model,
+                  context_chars=len(context)) as attrs:
+            response = self._call_with_swap(messages)
+            usage = self._usage(response)
+            attrs.update(usage)
+        trace = current_trace()
+        if trace is not None:
+            trace.add_tokens(usage.get("prompt_tokens", 0),
+                             usage.get("completion_tokens", 0))
+
+        answer = (response.choices[0].message.content or "").replace("\u202f", " ").replace("\u3010", "[").replace("\u3011", "]").strip()
         answer = re.sub(r"\[(\d+)\]", r"[Source \1]", answer)
-        
+
         # Post-process: strip uncited sentences
-        answer = self._enforce_citations(answer)
-        
+        with span("generation.enforce_citations"):
+            answer = self._enforce_citations(answer)
+
         return GeneratedResponse(
             answer=answer,
             citations=citations,
             query=query,
             model=self.model,
             retrieval_results=retrieval_results,
+            usage=usage,
         )
+
+    @staticmethod
+    def _usage(response) -> dict:
+        """Token counts from a LiteLLM response (empty if the provider omits them)."""
+        usage = getattr(response, "usage", None)
+        if usage is None:
+            return {}
+        return {
+            "prompt_tokens": int(getattr(usage, "prompt_tokens", 0) or 0),
+            "completion_tokens": int(getattr(usage, "completion_tokens", 0) or 0),
+            "total_tokens": int(getattr(usage, "total_tokens", 0) or 0),
+        }
