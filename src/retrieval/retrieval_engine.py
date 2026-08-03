@@ -4,9 +4,8 @@ application calls. It orchestrates hybrid search + re-ranking
 behin a clean interface.
 """
 
-from src.retrieval.hybrid_retrieval import HybridRetriever, HybridResult
-from src.retrieval.reranker import CrossEncoderReranker, RerankedResult
-from src.ingestion.embedding_service import EmbeddingService
+from src.retrieval.hybrid_retrieval import HybridRetriever
+from src.observability.tracing import span
 
 class RetrievalEngine:
     """Production retrieval: hybrid search -> re-rank -> return.
@@ -42,32 +41,38 @@ class RetrievalEngine:
         2. Hybrid search (dense + sparse + RRF)
         3. Optionally re-rank with cross-encoder
         
-        
         the use_reranke flag lets you A/B test: does re-ranking
-        actually improve your results? Measure it, don't assume.
+        actually improve your results?
         """
 
         # 1. Embed the query
-        query_embedding = self.embedder.embed_text(query)
+        with span("retrieval.embed_query"):
+            query_embedding = self.embedder.embed_text(query)
 
         # 2. Hybrid search - fetch more candidates than needed
         # so the re-ranker has good material to work with
         fetch_k = top_k * 4 if use_reranker else top_k
 
-        hybrid_results = self.hybrid.search(
-            query = query,
-            query_embedding = query_embedding,
-            top_k = fetch_k,
-            metadata_filter = metadata_filter,
-        )
+        with span("retrieval.hybrid_search", fetch_k=fetch_k) as attrs:
+            hybrid_results = self.hybrid.search(
+                query = query,
+                query_embedding = query_embedding,
+                top_k = fetch_k,
+                metadata_filter = metadata_filter,
+            )
+            attrs["candidates"] = len(hybrid_results)
 
         # 3. Re-rank if enabled and available
         if use_reranker and self.reranker and hybrid_results:
-            return self.reranker.rerank(
-                query = query,
-                results = hybrid_results,
-                top_k = top_k,
-            )
+            with span("retrieval.rerank", candidates=len(hybrid_results)) as attrs:
+                reranked = self.reranker.rerank(
+                    query = query,
+                    results = hybrid_results,
+                    top_k = top_k,
+                )
+                attrs["top_score"] = (round(reranked[0].rerank_score, 3)
+                                      if reranked else None)
+            return reranked
         
         # Without re-ranking, return hybrid results directly
         return hybrid_results[:top_k]
