@@ -1,8 +1,9 @@
 """
 FastAPI application entry point.
 
-This is where everything connects: guardrails -> RAG pipeline -> response.
-One command starts the whole system: uvicorn src.api.main:app --reload
+Everything connects here: guardrails -> RAG pipeline -> response.
+One command that starts the whole system: 
+        uvicorn src.api.main:app --reload
 """
 
 import os
@@ -13,6 +14,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Security, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.encoders import jsonable_encoder
 from dotenv import load_dotenv
 
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -20,6 +22,9 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 from src.api.auth import verify_api_key
 from src.api.models import ChatRequest, IngestRequest
+from src.observability.tracing import (
+    get_trace_store, measure, peak_rss_mb, rss_mb, start_trace,
+)
 
 load_dotenv()
 
@@ -92,24 +97,29 @@ async def lifespan(app: FastAPI):
     from src.guardrails.guardrails_pipeline import GuardedRAGPipeline
 
     print("Starting up - loading models...")
+    startup_perf = {"rss_at_start_mb": rss_mb()}
 
     # Core services
-    embedder = EmbeddingService(
-        model_name = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
-    )
-    store = VectorStore(
-        connection_string = os.getenv("DATABASE_URL"),
-        embedding_dimension = embedder.dimension,
-    )
+    with measure("load_embedder", startup_perf):
+        embedder = EmbeddingService(
+            model_name = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
+        )
+    with measure("connect_vector_store", startup_perf):
+        store = VectorStore(
+            connection_string = os.getenv("DATABASE_URL"),
+            embedding_dimension = embedder.dimension,
+        )
 
     # Retrieval
     bm25 = BM25Retriever()
-    bm25.load_from_vector_store(store)
+    with measure("build_bm25_index", startup_perf) as m:
+        m["chunks"] = bm25.load_from_vector_store(store)
 
-    reranker = CrossEncoderReranker(
-        model_name = os.getenv("RERANKER_MODEL",
-                               "cross-encoder/ms-marco-MiniLM-L-6-v2")
-    )
+    with measure("load_reranker", startup_perf):
+        reranker = CrossEncoderReranker(
+            model_name = os.getenv("RERANKER_MODEL",
+                                   "cross-encoder/ms-marco-MiniLM-L-6-v2")
+        )
 
     retrieval_engine = RetrievalEngine(
         vector_store = store,
@@ -162,8 +172,16 @@ async def lifespan(app: FastAPI):
     app_state["pipeline"] = guarded_pipeline
     app_state["store"] = store
     app_state["embedder"] = embedder
+    app_state["bm25"] = bm25
+    app_state["retrieval_engine"] = retrieval_engine
+
+    startup_perf["rss_ready_mb"] = rss_mb()
+    startup_perf["process_peak_mb"] = peak_rss_mb()
+    app_state["startup_perf"] = startup_perf
 
     print(f"Groq API keys loaded: {len(GROQ_KEYS)}")
+    print(f"Startup perf: { {k: v.get('ms') for k, v in startup_perf.items() if isinstance(v, dict)} } ms, "
+          f"RSS {startup_perf['rss_ready_mb']} MB")
     print("Startup complete - ready to serve")
 
     yield   # app runs here
@@ -234,20 +252,55 @@ async def health():
 @app.post("/api/chat")
 async def chat(request: ChatRequest, api_key: str = Security(verify_api_key)):
     pipeline = app_state["pipeline"]
-    for attempt in range(3):
-        try:
-            result = pipeline.answer(query = request.query, top_k = request.top_k)
-            break
-        except Exception as e:
-            if "rate" in str(e).lower() or "429" in str(e) or "quota" in str(e).lower():
-                swap_groq_key()
-                time.sleep(5)
-                continue
-            raise
-    else:
-        raise HTTPException(status_code=429, detail="All API keys exhausted")
+    with start_trace("chat", top_k=request.top_k) as trace:
+        for attempt in range(3):
+            try:
+                result = pipeline.answer(query = request.query, top_k = request.top_k)
+                break
+            except Exception as e:
+                if "rate" in str(e).lower() or "429" in str(e) or "quota" in str(e).lower():
+                    trace.set(rate_limit_retries=attempt + 1)
+                    swap_groq_key()
+                    time.sleep(5)
+                    continue
+                raise
+        else:
+            trace.set(decision="rate_limited")
+            raise HTTPException(status_code=429, detail="All API keys exhausted")
     result["answer"] = html.escape(result["answer"])  # Sanitize output to prevent XSS
-    return result
+    result["trace_id"] = trace.trace_id
+    result["perf"] = trace.summary()        # final numbers, trace is finished
+    return JSONResponse(jsonable_encoder(result), headers={"X-Trace-Id": trace.trace_id})
+
+
+@app.get("/api/traces")
+async def list_traces(limit: int = 20, kind: str | None = None,
+                      api_key: str = Security(verify_api_key)):
+    """Most recent traces (newest first): id, total time, decision, tokens."""
+    limit = max(1, min(limit, 200))
+    return {"traces": get_trace_store().recent(limit=limit, kind=kind)}
+
+
+@app.get("/api/traces/{trace_id}")
+async def get_trace(trace_id: str, api_key: str = Security(verify_api_key)):
+    """Full trace: every stage with its time and memory, retrieval scores, tokens."""
+    trace = get_trace_store().get(trace_id)
+    if trace is None:
+        raise HTTPException(404, "Trace not found (only the most recent traces are kept in memory)")
+    return trace
+
+
+@app.get("/api/metrics")
+async def metrics(kind: str | None = None, api_key: str = Security(verify_api_key)):
+    """Latency percentiles (overall and per stage), memory, tokens, decisions."""
+    report = get_trace_store().metrics(kind=kind)
+    report["startup"] = app_state.get("startup_perf", {})
+    for name in ("retrieval_engine", "response_cache"):
+        component = app_state.get(name)
+        stats = getattr(component, "cache_stats", None)
+        if callable(stats):
+            report.setdefault("caches", {})[name] = stats()
+    return report
 
 
 @app.post("/api/ingest")
@@ -282,7 +335,19 @@ async def ingest(request: IngestRequest, api_key: str = Security(verify_api_key)
     if bm25:
         bm25.load_from_vector_store(app_state["store"])
 
-    return {"status": "ok", "files_ingested": len(results), "details": results}
+    _after_ingest()
+
+    return {"status": "ok", "files_ingested": len(results), "details": results,
+            "perf": getattr(pipeline, "last_perf", None)}
+
+
+def _after_ingest():
+    """Hook for components that must refresh when the knowledge base changes."""
+    for name in ("retrieval_engine", "response_cache"):
+        component = app_state.get(name)
+        refresh = getattr(component, "on_index_changed", None)
+        if callable(refresh):
+            refresh()
 
 @app.post("/api/evaluate")
 async def evaluate(request: dict, api_key: str = Security(verify_api_key)):
