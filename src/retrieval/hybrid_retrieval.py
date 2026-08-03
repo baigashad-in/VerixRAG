@@ -33,8 +33,7 @@ EXAMPLE:
 """
 
 from dataclasses import dataclass
-from src.retrieval.sparse_retrieval import BM25Retriever, SparseResult
-from src.storage.vector_store import VectorStore
+from src.observability.tracing import span
 
 @dataclass
 class HybridResult:
@@ -96,13 +95,17 @@ class HybridRetriever:
             """
         
         # 1. Get results from both retrieval methods
-        dense_results = self.vector_store.search(
-            query_embedding, 
-            top_k = fetch_k,
-            metadata_filter = metadata_filter,
-        )
+        with span("dense_search", k=fetch_k) as attrs:
+            dense_results = self.vector_store.search(
+                query_embedding,
+                top_k = fetch_k,
+                metadata_filter = metadata_filter,
+            )
+            attrs["hits"] = len(dense_results)
 
-        sparse_results = self.bm25.search(query, top_k = fetch_k)
+        with span("sparse_search", k=fetch_k) as attrs:
+            sparse_results = self.bm25.search(query, top_k = fetch_k)
+            attrs["hits"] = len(sparse_results)
 
         # 2. Build RRF scores
         # Key: chunk_id -> {content, metadata, rrf_score, ranks}
