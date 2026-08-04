@@ -37,6 +37,7 @@ class EvalResult:
     claims: Optional[tuple] = None                    # (supported, total)
     perf: dict = field(default_factory=dict)          # pipeline time/memory/tokens
     judge_seconds: float = 0.0
+    gate: dict = field(default_factory=dict)          # confidence gate decision
 
 class EvaluationRunner:
     def __init__(self, rag_pipeline, metrics, eval_dataset):
@@ -91,6 +92,7 @@ class EvaluationRunner:
                 retrieved_contexts=contexts,
                 contexts_source=source,
                 perf={**(output.get("perf") or {}), "wall_ms": wall_ms},
+                gate=output.get("abstained") or output.get("confidence") or {},
             )
 
             if not answer.strip():
@@ -158,6 +160,7 @@ class EvaluationRunner:
                 "answered": sum(1 for r in in_scope if r.outcome == "answered"),
                 "refused": len(refused),
                 "empty": len(empty),
+                "abstained_by_gate": sum(1 for r in in_scope if r.gate.get("passed") is False),
                 **in_scope_means,
                 "scored_counts": {m: sum(1 for r in in_scope if r.scores.get(m) is not None)
                                   for m in METRICS},
@@ -165,6 +168,7 @@ class EvaluationRunner:
             "out_of_scope": {
                 "n": len(out_scope),
                 "refused": sum(1 for r in out_scope if r.outcome == "refused"),
+                "abstained_by_gate": sum(1 for r in out_scope if r.gate.get("passed") is False),
             },
             "judge_failures": sum(len(r.judge_errors) for r in results),
             "judge_tokens": getattr(self.metrics, "tokens_used", None),
@@ -185,6 +189,7 @@ class EvaluationRunner:
                     "judge_errors": r.judge_errors,
                     "judge_raw": r.judge_raw,
                     "perf": r.perf,
+                    "gate": r.gate,
                 }
                 for r in results
             ],
