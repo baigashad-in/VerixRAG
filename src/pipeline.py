@@ -7,15 +7,21 @@ from src.query.enhanced_retrieval import EnhancedRetriever, QueryStrategy
 from src.generation.generator import RAGGenerator
 from src.generation.hallucination_check import HallucinationDetector
 from src.observability.tracing import ensure_trace, span
+from src.retrieval.confidence import ABSTAIN_ANSWER, ConfidenceGate
 
 
 class RAGPipeline:
     """End-to-end RAG: transform -> retrieve -> generate -> verify."""
 
-    def __init__(self, enhanced_retriever: EnhancedRetriever, generator: RAGGenerator, hallucination_detector: HallucinationDetector = None):
+    def __init__(self, enhanced_retriever: EnhancedRetriever, generator: RAGGenerator, hallucination_detector: HallucinationDetector = None,
+                 confidence_gate: ConfidenceGate = None):
         self.retriever = enhanced_retriever
         self.generator = generator
         self.hallucination_detector = hallucination_detector
+        if confidence_gate is None:
+            from src.config import get_settings
+            confidence_gate = ConfidenceGate(get_settings().rerank_min_score)
+        self.gate = confidence_gate
 
     def answer(self, query: str,  top_k: int = 8,
                query_strategy: QueryStrategy = QueryStrategy.NONE,
@@ -54,6 +60,25 @@ class RAGPipeline:
                 "trace_id": trace.trace_id,
             }
 
+        # Confidence gate: abstain without an LLM call when even the
+        # best chunk is a poor match for the question.
+        with span("confidence_gate") as attrs:
+            gate = self.gate.check(results)
+            attrs.update(gate.as_dict())
+        trace.set(gate=gate.as_dict())
+        if not gate.passed:
+            trace.set(decision="abstained_low_confidence")
+            return {
+                "answer": ABSTAIN_ANSWER,
+                "citations": [],
+                "retrieval_results": len(results),
+                **({"chunks": results} if return_chunks else {}),
+                "hallucination_check": None,
+                "abstained": gate.as_dict(),
+                "query_strategy": query_strategy.value,
+                "trace_id": trace.trace_id,
+            }
+        
         with span("generation"):
             response = self.generator.generate(
                 query = query,
@@ -86,6 +111,7 @@ class RAGPipeline:
             "retrieval_results": len(results),
             **({"chunks": results} if return_chunks else {}),
             "hallucination_check": hallucination_check,
+            "confidence": gate.as_dict(),
             "query_strategy": query_strategy.value,
             "model": response.model,
             "usage": response.usage,
