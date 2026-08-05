@@ -1,25 +1,25 @@
 """Vector store using PostgreSQL + pgvector.
 
-Why pgvector over Pinecone, Weaviate, or FAISS?
-Because it provides hybrid search with metadata
-filters in a single query, without adding another
-managed service.
+It provides hybrid search with metadata filters in a 
+single query, without adding another managed service.
 
 SCHEMA DESIGN:
 Each row = one chunk, with its text, vector, and metadata
-as JSONB. The JSONB column lets you filter by source file,
+as JSONB. The JSONB column filter by source file,
 chunk strategy, date, or any custom field without schema
 migrations.
 """
 
 import json
 import re
+import time
 import psycopg
 
 class VectorStore:
     ALLOWED_KEYS = {
             "filename", "source", "file_type", 
             "chunk_strategy", "chunk_index",
+            "doc_hash", "section", "title", "domain",
     }
 
     # Content size limit per chunk — prevents storing huge blobs
@@ -36,6 +36,7 @@ class VectorStore:
         """
         self.conn = psycopg.connect(connection_string)
         self.dimension = embedding_dimension
+        self._version_cache: tuple[float, str] | None = None
         self._initialize_db()
 
     def _initialize_db(self):
@@ -82,6 +83,22 @@ class VectorStore:
                         ON chunks
                         USING gin (metadata);
             """)
+
+            # Document registry: one row per ingested file and version.
+            # Lets ingestion skip unchanged files even when every chunk
+            # of a file was dropped as a duplicate.
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS documents (
+                source TEXT PRIMARY KEY,
+                ingest_sig TEXT,
+                doc_hash TEXT,
+                domain TEXT,
+                title TEXT,
+                chunks INTEGER,
+                duplicates_dropped INTEGER,
+                ingested_at TIMESTAMPTZ DEFAULT now()
+            );
+            """)
             self.conn.commit()
         print("Vector Store initialized")
 
@@ -124,8 +141,8 @@ class VectorStore:
         Lower distance = more similar. We ORDER BY distance ASC to
         get the best matches first.
 
-        METADATA FILTERING is what makes this production-grade:
-        you can search ONLY within a specific document, or only chunks from a certain strategy, or only recent documents.
+        METADATA FILTERING:
+        search ONLY within a specific document, or only chunks from a certain strategy, or only recent documents.
 
         Example: search only in the refund policy doc:
             metadata_filter = {"filename": "refund_policy.md"}
@@ -183,6 +200,125 @@ class VectorStore:
             by_strategy = dict(cur.fetchall())
         return {"total_chunks": count, "by_strategy": by_strategy}
     
+    def replace_source(self, source: str, embedded_chunks: list,
+                       doc_info: dict | None = None) -> tuple[int, int]:
+        """Delete a source's chunks and insert new ones in ONE transaction.
+
+        Readers never see the document missing halfway through a
+        re-ingest, and a failed insert leaves the old version in place.
+        doc_info (ingest_sig, doc_hash, domain, title, duplicates_dropped)
+        is upserted into the documents registry in the same transaction.
+        Returns (deleted, inserted).
+        """
+        if not re.match(r'^[\w\-. ]+$', source):
+            raise ValueError(f"Invalid source filename: {source}")
+        with self.conn.cursor() as cur:
+            try:
+                cur.execute("DELETE FROM chunks WHERE metadata->>'source' = %s", (source,))
+                deleted = cur.rowcount
+                for chunk in embedded_chunks:
+                    if len(chunk.content) > self.MAX_CHUNK_CONTENT:
+                        raise ValueError(f"Chunk content exceeds {self.MAX_CHUNK_CONTENT} chars")
+                    cur.execute(
+                        "INSERT INTO chunks (content, embedding, metadata) VALUES (%s, %s::vector, %s::jsonb)",
+                        (chunk.content, str(chunk.embedding), self._validate_metadata(chunk.metadata))
+                    )
+                if doc_info is not None:
+                    cur.execute("""
+                        INSERT INTO documents (source, ingest_sig, doc_hash, domain, title,
+                                               chunks, duplicates_dropped, ingested_at)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, now())
+                        ON CONFLICT (source) DO UPDATE SET
+                            ingest_sig = EXCLUDED.ingest_sig, doc_hash = EXCLUDED.doc_hash,
+                            domain = EXCLUDED.domain, title = EXCLUDED.title,
+                            chunks = EXCLUDED.chunks,
+                            duplicates_dropped = EXCLUDED.duplicates_dropped,
+                            ingested_at = now();""",
+                        (source, doc_info.get("ingest_sig"), doc_info.get("doc_hash"),
+                         doc_info.get("domain"), doc_info.get("title"),
+                         len(embedded_chunks), doc_info.get("duplicates_dropped", 0)))
+                self.conn.commit()
+            except Exception:
+                self.conn.rollback()
+                raise
+        self.invalidate_version()
+        print(f"Replaced {source}: -{deleted} +{len(embedded_chunks)} chunks")
+        return deleted, len(embedded_chunks)
+
+    def index_version(self, max_age_seconds: float = 2.0) -> str:
+        """A string that changes whenever chunks are inserted or deleted.
+
+        Cache keys include it, so re-ingesting makes old cache entries
+        unreachable. Memoised for a couple of seconds so a burst of
+        requests costs one tiny query.
+        """
+        now = time.monotonic()
+        if self._version_cache and now - self._version_cache[0] < max_age_seconds:
+            return self._version_cache[1]
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*), COALESCE(MAX(id), 0) FROM chunks;")
+            count, max_id = cur.fetchone()
+        version = f"{count}:{max_id}"
+        self._version_cache = (now, version)
+        return version
+
+    def invalidate_version(self):
+        self._version_cache = None
+
+    def domain_centroids(self) -> dict[str, list[float]]:
+        """Mean embedding of each domain's chunks (pgvector AVG aggregate)."""
+        with self.conn.cursor() as cur:
+            cur.execute("""
+                SELECT metadata->>'domain', AVG(embedding)::text
+                FROM chunks
+                WHERE metadata ? 'domain' AND metadata->>'domain' <> ''
+                GROUP BY metadata->>'domain';""")
+            return {row[0]: json.loads(row[1]) for row in cur.fetchall()}
+
+    def source_signatures(self) -> dict[str, str | None]:
+        """{source: ingest signature} for every stored document.
+
+        Used to skip re-embedding documents that haven't changed.
+        Chunks ingested before signatures existed map to None.
+        """
+        with self.conn.cursor() as cur:
+            # Chunks stored before the registry existed: unknown signature
+            cur.execute("SELECT DISTINCT metadata->>'source' FROM chunks;")
+            signatures = {row[0]: None for row in cur.fetchall() if row[0]}
+            cur.execute("SELECT source, ingest_sig FROM documents;")
+            signatures.update({row[0]: row[1] for row in cur.fetchall()})
+            return signatures
+
+    def list_documents(self) -> list[dict]:
+        """The document registry: version, domain and chunk counts per file."""
+        with self.conn.cursor() as cur:
+            cur.execute("""SELECT source, doc_hash, domain, title, chunks,
+                                  duplicates_dropped, ingested_at
+                           FROM documents ORDER BY source;""")
+            cols = ["source", "doc_hash", "domain", "title", "chunks",
+                    "duplicates_dropped", "ingested_at"]
+            return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+    def nearest_chunks(self, query_embedding: list[float], k: int = 3,
+                       exclude_sources: list[str] | None = None) -> list[dict]:
+        """Nearest stored chunks, optionally skipping some sources.
+
+        Used by deduplication to compare new chunks against what is
+        already stored from OTHER documents.
+        """
+        exclude = list(exclude_sources or [])
+        with self.conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, content, metadata->>'source',
+                       1 - (embedding <=> %s::vector) AS similarity
+                FROM chunks
+                WHERE NOT (COALESCE(metadata->>'source', '') = ANY(%s))
+                ORDER BY embedding <=> %s::vector
+                LIMIT %s;""",
+                (str(query_embedding), exclude, str(query_embedding), k))
+            return [{"id": r[0], "content": r[1], "source": r[2], "similarity": float(r[3])}
+                    for r in cur.fetchall()]
+
     def delete_by_source(self, source: str):
         """Delete all chunks from a specific source file.
         
@@ -199,7 +335,9 @@ class VectorStore:
                 "DELETE FROM chunks WHERE metadata->>'source' = %s", (source,)
             )
             deleted = cur.rowcount
+            cur.execute("DELETE FROM documents WHERE source = %s", (source,))
             self.conn.commit()
+        self.invalidate_version()
         print(f"Deleted {deleted} chunks from {source}")
         return deleted
         
