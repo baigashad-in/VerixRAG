@@ -1,0 +1,18 @@
+{
+  "_comment": "Maps each document to a domain for source scoping. Unlisted files get no domain and are never penalised. A `domain:` front-matter line in a document overrides this file. Aliases are distinctive names; a query naming exactly one domain's alias is scoped to it.",
+  "files": {
+    "account_guide.md": "store",
+    "policies.md": "store",
+    "refund_policy.md": "store",
+    "shipping_policy.md": "store",
+    "product_manual.md": "clouddeck",
+    "technical_api_docs.md": "verixapi",
+    "hr_handbook.md": "hr"
+  },
+  "domains": {
+    "store": {"aliases": ["verixstore", "verix store"]},
+    "clouddeck": {"aliases": ["clouddeck", "cloud deck"]},
+    "verixapi": {"aliases": ["verixapi", "verix api"]},
+    "hr": {"aliases": ["nexora", "employee handbook", "hr handbook"]}
+  }
+}
