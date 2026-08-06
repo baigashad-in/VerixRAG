@@ -33,6 +33,7 @@ pgdata/
 # Experiment logs (large files, track results not raw data)
 experiments/*.json
 experiments/*.csv
+experiments/*.jsonl*
 !experiments/.gitkeep
 
 # Model cache (downloaded models are large)
