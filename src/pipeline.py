@@ -104,6 +104,7 @@ class RAGPipeline:
                 {
                     "id": c.citation_id,
                     "source": c.source_file,
+                    "section": c.section,
                     "preview": c.content_preview,
                 }
                 for c in response.citations
