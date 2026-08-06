@@ -289,6 +289,10 @@ async def get_trace(trace_id: str, api_key: str = Security(verify_api_key)):
         raise HTTPException(404, "Trace not found (only the most recent traces are kept in memory)")
     return trace
 
+@app.get("/api/documents")
+async def documents(api_key: str = Security(verify_api_key)):
+    """Ingested documents: version hash, domain, title, chunks kept, duplicates dropped."""
+    return {"documents": app_state["store"].list_documents()}
 
 @app.get("/api/metrics")
 async def metrics(kind: str | None = None, api_key: str = Security(verify_api_key)):
