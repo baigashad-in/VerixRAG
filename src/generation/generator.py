@@ -20,6 +20,7 @@ class Citation:
     chunk_id: int             # which chunk in the database
     source_file: str          # which original document
     content_preview: str      # first 100 chars of the chunk
+    section: str = ""         # heading path inside the document
 
 
 @dataclass
@@ -79,14 +80,17 @@ class RAGGenerator:
             metadata = result.metadata
             chunk_id = result.chunk_id
             source = metadata.get("filename", "unknown")
+            section = metadata.get("section") or ""
+            origin = f"{source} › {section}" if section else source
 
-            context_parts.append(f"[Source {i}] (from: {source})\n{content}")
+            context_parts.append(f"[Source {i}] (from: {origin})\n{content}")
 
             citations.append(Citation(
                 citation_id = i,
                 chunk_id = chunk_id,
                 source_file = source,
                 content_preview = content[:100],
+                section = section,
             ))
 
         context = "\n\n---\n\n".join(context_parts)
