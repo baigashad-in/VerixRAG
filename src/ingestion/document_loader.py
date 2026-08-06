@@ -63,8 +63,10 @@ class DocumentLoader:
         extensions = extensions or [".txt", ".md"]
         docs = []
 
-        for file_path in Path(dir_path).rglob("*"):
-            if file_path.suffix in extensions:
+        # Sorted, so ingestion order (and therefore which copy of a
+        # duplicated chunk is kept) is deterministic across machines
+        for file_path in sorted(Path(dir_path).rglob("*")):
+            if file_path.suffix in extensions and not file_path.name.startswith("."):
                 docs.append(self.load_file(str(file_path)))
 
         print(f"Loaded {len(docs)} documents")
