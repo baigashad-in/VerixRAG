@@ -45,6 +45,9 @@ def show_trace(t: dict):
           f"{t.get('total_ms')} ms")
     print(f"query: {t.get('attrs', {}).get('query')}")
     print(f"decision: {t.get('attrs', {}).get('decision')}  gate: {t.get('attrs', {}).get('gate')}")
+    for s in t.get("spans", []):
+        if s.get("error"):
+            print(f"ERROR in {s['name']}: {s['error']}")
     print("\nspans (offset → duration, RSS):")
     for s in sorted(t.get("spans", []), key=lambda s: s["offset_ms"]):
         indent = "    " if s.get("parent") else "  "
@@ -95,7 +98,13 @@ def report(traces: list[dict], slowest: int):
     print(f"Decisions: {dict(decisions)}")
     errors = [t for t in chats if t.get("status") == "error"]
     if errors:
-        print(f"Errors: {len(errors)} (e.g. trace {errors[-1]['trace_id']})")
+        print(f"\nErrors: {len(errors)}")
+        for t in errors[-10:]:
+            failed = [s for s in t.get("spans", []) if s.get("error")]
+            where = (f"{failed[0]['name']}: {failed[0]['error']}" if failed
+                     else "outside any stage (see docker compose logs)")
+            q = (t.get("attrs", {}).get("query") or "")[:40]
+            print(f"  {t['trace_id']}  {q!r}\n      {where}")
 
     print(f"\nSlowest {slowest}:")
     for t in sorted(chats, key=lambda t: -t["total_ms"])[:slowest]:
