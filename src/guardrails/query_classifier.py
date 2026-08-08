@@ -108,8 +108,15 @@ class LLMClassifier:
     """
 
     def __init__(self, model: str = "gemini/gemini-3.1-flash-lite",
-                 scope_description: str = None):
+                 scope_description: str = None,
+                 timeout: float | None = None, num_retries: int | None = None):
         self.model = model
+        # Bound the time a slow or failing provider can add to a request.
+        # Without these, a Gemini 503 took 15-70 s (or crashed the request).
+        self.timeout = timeout if timeout is not None else float(
+            os.getenv("CLASSIFIER_TIMEOUT", "5"))
+        self.num_retries = num_retries if num_retries is not None else int(
+            os.getenv("CLASSIFIER_RETRIES", "1"))
         self.scope_description = scope_description or (
             "A knowledge base containing internal company documents. "
             "A query is in-scope if it relates to any topic that an organization "
@@ -120,21 +127,28 @@ class LLMClassifier:
         )
 
     def classify(self, query: str) -> dict:
-        response = completion(
-            model = self.model,
-            messages = [{
-                "role": "user",
-                "content": f"""Determine if this query is within scope.
-                Scope: {self.scope_description}
-                Query: {query}
-                Return ONLY JSON: {{"in_scope": true/false, "reason": "brief explanation"}}"""
-                        }],
-                            temperature = 0.0, 
-                            api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"),
-                            custom_llm_provider = "gemini",
-                        )
+        """Ask the LLM whether the query is in scope.
 
-        raw = response.choices[0].message.content.strip()
+        FAILS OPEN: if the provider errors or times out (e.g. Gemini
+        503 "model overloaded"), the query is treated as in scope, the
+        same as an unparseable reply. The scope check is a convenience
+        filter, not a safety control: an off-topic question that slips
+        through still meets the confidence gate and a generator that
+        only answers from retrieved sources. Failing closed would turn
+        every provider outage into an outage of the whole API.
+        """
+        try:
+            response = self._complete(query)
+        except Exception as e:
+            print(f"Scope classifier unavailable ({type(e).__name__}), defaulting to in-scope")
+            return {
+                "in_scope": True,
+                "confidence": "low",
+                "reason": "LLM classifier unavailable - defaulting to in-scope",
+                "error": f"{type(e).__name__}: {str(e)[:200]}",
+            }
+
+        raw = (response.choices[0].message.content or "").strip()
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0]
 
@@ -152,6 +166,23 @@ class LLMClassifier:
                 "confidence": "low",
                 "reason": "LLM classification failed - defaulting to in-scope",
             }
+
+    def _complete(self, query: str):
+        return completion(
+            model = self.model,
+            messages = [{
+                "role": "user",
+                "content": f"""Determine if this query is within scope.
+                Scope: {self.scope_description}
+                Query: {query}
+                Return ONLY JSON: {{"in_scope": true/false, "reason": "brief explanation"}}"""
+                        }],
+                            temperature = 0.0, 
+                            api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"),
+                            custom_llm_provider = "gemini",
+                            timeout = self.timeout,
+                            num_retries = self.num_retries,
+                        )
         
 class QueryClassifierPipeline:
     """Two-stage classifier: fast keyword check -> LLM fallback.
