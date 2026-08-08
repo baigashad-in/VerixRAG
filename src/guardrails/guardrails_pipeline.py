@@ -43,6 +43,8 @@ class GuardedRAGPipeline:
             classification = self.classifier.classify(query)
             attrs["stage"] = classification.get("stage")
             attrs["in_scope"] = classification.get("in_scope")
+            if classification.get("error"):
+                attrs["fallback"] = classification["error"]   # provider failed, failed open
 
         if not classification["in_scope"]:
             if trace is not None:
