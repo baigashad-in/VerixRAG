@@ -95,6 +95,7 @@ async def lifespan(app: FastAPI):
     from src.generation.hallucination_check import HallucinationDetector
     from src.pipeline import RAGPipeline
     from src.guardrails.guardrails_pipeline import GuardedRAGPipeline
+    from src.retrieval.scoping import DomainScorer
 
     print("Starting up - loading models...")
     startup_perf = {"rss_at_start_mb": rss_mb()}
@@ -121,12 +122,18 @@ async def lifespan(app: FastAPI):
                                    "cross-encoder/ms-marco-MiniLM-L-6-v2")
         )
 
+    domain_scorer = DomainScorer.from_settings()
+
     retrieval_engine = RetrievalEngine(
         vector_store = store,
         bm25_retriever = bm25,
         embedding_service = embedder,
         reranker = reranker,
+        domain_scorer = domain_scorer,
     )
+    with measure("domain_centroids", startup_perf) as m:
+        retrieval_engine.refresh_domains()
+        m["domains"] = sorted(domain_scorer.centroids)
 
     # Query processing
     transformer = QueryTransformer()
