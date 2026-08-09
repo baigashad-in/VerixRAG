@@ -30,6 +30,8 @@ class RerankedResult:
     metadata: dict
     rerank_score: float             # cross-encoder relevance score
     original_rrf_score: float       # score before re-ranking
+    final_score: float | None = None    # rerank_score after domain scoping
+    domain_penalty: float = 0.0
 
 class CrossEncoderReranker:
     """Re-ranks retrieved results using a cross-encoder model.
