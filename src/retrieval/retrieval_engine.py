@@ -5,7 +5,7 @@ behin a clean interface.
 """
 
 from src.retrieval.hybrid_retrieval import HybridRetriever
-from src.observability.tracing import span
+from src.observability.tracing import span, current_trace
 
 class RetrievalEngine:
     """Production retrieval: hybrid search -> re-rank -> return.
@@ -21,10 +21,12 @@ class RetrievalEngine:
     def __init__(self, vector_store, bm25_retriever,
                  embedding_service, reranker=None,
                  dense_weight: float = 1.0,
-                 sparse_weight: float = 1.0):
+                 sparse_weight: float = 1.0,
+                 domain_scorer=None):
         
         self.embedder = embedding_service
         self.reranker = reranker
+        self.domain_scorer = domain_scorer
 
         self.hybrid = HybridRetriever(
             vector_store = vector_store,
@@ -64,19 +66,43 @@ class RetrievalEngine:
 
         # 3. Re-rank if enabled and available
         if use_reranker and self.reranker and hybrid_results:
+            # Score ALL candidates, so domain scoping can promote an
+            # in-domain chunk from below the cut-off.
             with span("retrieval.rerank", candidates=len(hybrid_results)) as attrs:
                 reranked = self.reranker.rerank(
                     query = query,
                     results = hybrid_results,
-                    top_k = top_k,
+                    top_k = len(hybrid_results),
                 )
                 attrs["top_score"] = (round(reranked[0].rerank_score, 3)
                                       if reranked else None)
-            return reranked
+
+            # 4. Source scoping: down-rank chunks from other domains
+            if self.domain_scorer is not None:
+                with span("retrieval.scoping") as attrs:
+                    detection = self.domain_scorer.detect(query, query_embedding)
+                    reranked = self.domain_scorer.apply(reranked, detection)
+                    attrs.update({k: v for k, v in detection.items() if k != "scores"})
+                    attrs["penalized_in_top_k"] = sum(
+                        1 for r in reranked[:top_k] if r.domain_penalty)
+                trace = current_trace()
+                if trace is not None:
+                    trace.set(scoping=detection)
+            return reranked[:top_k]
         
         # Without re-ranking, return hybrid results directly
         return hybrid_results[:top_k]
+
     
+    def refresh_domains(self):
+        """Reload per-domain centroids from the store (startup / after ingest)."""
+        if self.domain_scorer is not None and hasattr(self.hybrid.vector_store, "domain_centroids"):
+            self.domain_scorer.refresh(self.hybrid.vector_store.domain_centroids())
+
+    def on_index_changed(self):
+        """Called by the API after /api/ingest."""
+        self.refresh_domains()
+        
     def retrieve_with_debug(self, query: str, 
                             top_k: int = 5) -> dict:
         """Retrieve with full debug info - invaluable during development and evaluation.
