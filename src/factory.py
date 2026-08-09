@@ -9,7 +9,7 @@ Production components are measured in benchmarks.
 import os
 
 from src.observability.tracing import measure, rss_mb
-
+from src.retrieval.scoping import DomainScorer
 
 def build_retrieval_stack(with_reranker: bool = True) -> dict:
     """Load embedder, vector store, BM25 and (optionally) the reranker.
@@ -41,7 +41,10 @@ def build_retrieval_stack(with_reranker: bool = True) -> dict:
                 "RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2"))
 
     engine = RetrievalEngine(vector_store=store, bm25_retriever=bm25,
-                             embedding_service=embedder, reranker=reranker)
+                             embedding_service=embedder, reranker=reranker,
+                             domain_scorer=DomainScorer.from_settings())
+    with measure("domain_centroids", perf):
+        engine.refresh_domains()
     perf["rss_ready_mb"] = rss_mb()
     return {"embedder": embedder, "store": store, "bm25": bm25,
             "reranker": reranker, "engine": engine, "startup_perf": perf}
