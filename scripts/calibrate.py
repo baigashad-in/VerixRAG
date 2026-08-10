@@ -15,6 +15,11 @@ Usage:
 Set RERANK_MIN_SCORE in .env to the recommended value (or a bit
 lower, to keep a safety margin) and rebuild.
 
+DOMAIN SCOPING: questions in the generated dataset carry a source_file.
+Mapping it through config/domains.json gives the expected domain, so it
+can report how often query-domain detection is right at each
+DOMAIN_MIN_MARGIN. Pick the smallest margin with high accuracy.
+
 Caution: Calibrating on the same questions used to report evaluation scores 
 may overfit the gate to that set. Use a conservative value.
 """
@@ -32,6 +37,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from src.observability.tracing import latency_stats
+from src.retrieval.scoping import load_domain_config
 
 OUT_OF_SCOPE = {"out_of_scope"}
 
@@ -77,6 +83,33 @@ def summarize(scores: list[float]) -> dict:
     s = sorted(scores)
     return {**latency_stats(s), "min": round(s[0], 3), "p5": round(s[max(0, int(0.05 * len(s)) - 1)], 3)}
 
+def domain_table(rows: list[dict], margins=(0.0, 0.01, 0.02, 0.03, 0.05, 0.08, 0.1, 0.15)) -> list[dict]:
+    """Coverage/accuracy of domain detection for each candidate margin.
+
+    rows: [{"expected": str|None, "method": str, "domain": str|None,
+            "centroid_top": str|None, "margin": float|None}]
+    """
+    labelled = [r for r in rows if r["expected"]]
+    table = []
+    for m in margins:
+        assigned = correct = 0
+        for r in labelled:
+            if r["method"] == "alias":
+                guess = r["domain"]
+            elif r.get("margin") is not None and r["margin"] >= m:
+                guess = r["centroid_top"]
+            else:
+                guess = None
+            if guess:
+                assigned += 1
+                correct += guess == r["expected"]
+        table.append({
+            "min_margin": m,
+            "coverage": round(assigned / len(labelled), 3) if labelled else None,
+            "accuracy": round(correct / assigned, 3) if assigned else None,
+            "wrong": assigned - correct,
+        })
+    return table
 
 def main():
     parser = argparse.ArgumentParser(description="Calibrate RERANK_MIN_SCORE (no LLM calls)")
@@ -93,15 +126,27 @@ def main():
     stack = build_retrieval_stack()
     engine = stack["engine"]
 
+    domains = load_domain_config(os.getenv("DOMAINS_CONFIG", "config/domains.json"))
+    scorer = engine.domain_scorer
+
     items = load_items(args.dataset, args.limit)
     print(f"Scoring {len(items)} questions (retrieval only)...")
-    per_question = []
+    per_question, domain_rows = [], []
     for i, item in enumerate(items, 1):
         results = engine.retrieve(item["question"], top_k=args.top_k)
         scores = [r.rerank_score for r in results if getattr(r, "rerank_score", None) is not None]
         top = max(scores) if scores else None
         per_question.append({**item, "top_score": round(top, 4) if top is not None else None,
                              "top_source": (results[0].metadata.get("source") if results else None)})
+        if scorer is not None and item["category"] not in OUT_OF_SCOPE:
+            det = scorer.detect(item["question"], engine.embedder.embed_text(item["question"]))
+            ranked = list(det.get("scores", {}))
+            domain_rows.append({
+                "question": item["question"],
+                "expected": domains.domain_for(item["source_file"]) if item["source_file"] else None,
+                "method": det["method"], "domain": det.get("domain"),
+                "centroid_top": ranked[0] if ranked else None, "margin": det.get("margin"),
+            })
         if i % 25 == 0:
             print(f"  {i}/{len(items)}")
 
@@ -129,6 +174,10 @@ def main():
         "lowest_in_scope_questions": sorted(
             [q for q in per_question if q["category"] not in OUT_OF_SCOPE and q["top_score"] is not None],
             key=lambda q: q["top_score"])[:10],
+        "domain_detection": domain_table(domain_rows),
+        "domain_detection_current_margin": (scorer.min_margin if scorer else None),
+        "domain_misses": [r for r in domain_rows if r["expected"] and r["domain"]
+                          and r["domain"] != r["expected"]][:20],
         "highest_out_of_scope_questions": sorted(
             [q for q in per_question if q["category"] in OUT_OF_SCOPE and q["top_score"] is not None],
             key=lambda q: -q["top_score"])[:10],
@@ -155,6 +204,11 @@ def main():
     print("Lowest-scoring in-scope questions (check these are genuinely unanswerable):")
     for q in report["lowest_in_scope_questions"][:5]:
         print(f"  {q['top_score']:>7}  {q['question'][:80]}")
+    if report["domain_detection"] and domain_rows:
+        print(f"\nDomain detection (current DOMAIN_MIN_MARGIN={report['domain_detection_current_margin']}):")
+        print("  margin | coverage | accuracy | wrong")
+        for r in report["domain_detection"]:
+            print(f"  {r['min_margin']:>6} | {r['coverage']} | {r['accuracy']} | {r['wrong']}")
     print(f"Saved: {args.output}")
     stack["store"].close()
 
