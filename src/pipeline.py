@@ -113,6 +113,7 @@ class RAGPipeline:
             **({"chunks": results} if return_chunks else {}),
             "hallucination_check": hallucination_check,
             "confidence": gate.as_dict(),
+            "scoping": trace.attrs.get("scoping"),
             "query_strategy": query_strategy.value,
             "model": response.model,
             "usage": response.usage,
