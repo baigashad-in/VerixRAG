@@ -53,9 +53,16 @@ def show_trace(t: dict):
         indent = "    " if s.get("parent") else "  "
         print(f"{indent}{s['name']:<32} +{s['offset_ms']:>9.1f} ms  {s['duration_ms']:>9.1f} ms  "
               f"{s.get('rss_mb', '?')} MB ({s.get('rss_delta_mb', 0):+} MB)")
+    scoping = t.get("attrs", {}).get("scoping")
+    if scoping:
+        print(f"scoping: domain={scoping.get('domain')} method={scoping.get('method')}"
+              + (f" margin={scoping['margin']}" if "margin" in scoping else ""))
     print("\nretrieved:")
     for r in t.get("attrs", {}).get("retrieved", []):
-        print(f"  #{r['rank']} {r['source']:<24} id {r['chunk_id']:<5} score {r['rerank_score']}")
+        final = r.get("final_score")
+        adjusted = (f"  -> {final}" if final is not None and final != r.get("rerank_score") else "")
+        print(f"  #{r['rank']} {r['source']:<24} {r.get('domain', ''):<10} id {r['chunk_id']:<5} "
+              f"score {r.get('rerank_score')}{adjusted}")
 
 
 def report(traces: list[dict], slowest: int):
