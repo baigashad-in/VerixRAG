@@ -36,6 +36,12 @@ class RAGPipeline:
         result["perf"] = trace.summary()
         return result
 
+    def clear_caches(self):
+        """Drop cached retrievals (eval runs call this for honest latency numbers)."""
+        engine = getattr(self.retriever, "engine", None)
+        if engine is not None and hasattr(engine, "clear_cache"):
+            engine.clear_cache()
+            
     def _answer(self, query, top_k, query_strategy, check_hallucination,
                 return_chunks, trace) -> dict:
         trace.set(query=query[:200], top_k=top_k, strategy=query_strategy.value)
