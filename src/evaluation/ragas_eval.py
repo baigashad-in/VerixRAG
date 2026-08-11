@@ -70,6 +70,8 @@ class EvaluationRunner:
         results = []
         start = time.time()
         n = len(self.dataset.examples)
+        if hasattr(self.pipeline, "clear_caches"):
+            self.pipeline.clear_caches()    # measure real retrieval, not cache hits
         print(f"\nRunning evaluation: {config_label} ({n} examples)", flush=True)
 
         for i, ex in enumerate(self.dataset.examples):
