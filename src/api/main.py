@@ -17,13 +17,35 @@ from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
 from dotenv import load_dotenv
 
+from src.ingestion.ingest import IngestionPipeline
+from src.ingestion.embedding_service import EmbeddingService
+from src.storage.vector_store import VectorStore
+from src.retrieval.sparse_retrieval import BM25Retriever
+from src.retrieval.reranker import CrossEncoderReranker
+from src.retrieval.retrieval_engine import RetrievalEngine
+from src.retrieval.scoping import DomainScorer
+from src.query.query_transformer import QueryTransformer
+from src.query.enhanced_retrieval import EnhancedRetriever
+from src.generation.generator import RAGGenerator
+from src.generation.hallucination_check import HallucinationDetector
+from src.pipeline import RAGPipeline
+from src.guardrails.guardrails_pipeline import GuardedRAGPipeline
+from src.guardrails.query_classifier import LLMClassifier, QueryClassifierPipeline
+
+from src.evaluation.eval_dataset import EvalDataset, build_sample_dataset
+from src.evaluation.metrics import RAGMetrics
+from src.evaluation.ragas_eval import EvaluationRunner
+from src.cache.response_cache import ResponseCache
+from src.config import get_settings
+
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 from src.api.auth import verify_api_key
 from src.api.models import ChatRequest, IngestRequest
+
 from src.observability.tracing import (
-    get_trace_store, measure, peak_rss_mb, rss_mb, start_trace,
+    get_trace_store, measure, peak_rss_mb, rss_mb, start_trace, span,
 )
 
 load_dotenv()
@@ -78,24 +100,10 @@ async def lifespan(app: FastAPI):
     
     WHY LIFESPAN?
     Loading embedding models takes ~2 seconds. Re-ranking models
-    take another ~2 seconds. You don't want to load these on
+    take another ~2 seconds. Don't need to load these on
     every request. Lifespan loads them once when the server starts
     and shares them across all requests.
     """
-
-    from src.ingestion.embedding_service import EmbeddingService
-    from src.storage.vector_store import VectorStore
-    from src.retrieval.sparse_retrieval import BM25Retriever
-    from src.retrieval.hybrid_retrieval import HybridRetriever
-    from src.retrieval.reranker import CrossEncoderReranker
-    from src.retrieval.retrieval_engine import RetrievalEngine
-    from src.query.query_transformer import QueryTransformer
-    from src.query.enhanced_retrieval import EnhancedRetriever
-    from src.generation.generator import RAGGenerator
-    from src.generation.hallucination_check import HallucinationDetector
-    from src.pipeline import RAGPipeline
-    from src.guardrails.guardrails_pipeline import GuardedRAGPipeline
-    from src.retrieval.scoping import DomainScorer
 
     print("Starting up - loading models...")
     startup_perf = {"rss_at_start_mb": rss_mb()}
@@ -169,7 +177,6 @@ async def lifespan(app: FastAPI):
         )
 
     # Full pipeline with guardrails
-    from src.guardrails.query_classifier import LLMClassifier, QueryClassifierPipeline
     llm_classifier = LLMClassifier(scope_description=scope)
     classifier = QueryClassifierPipeline(llm_classifier=llm_classifier)
 
@@ -181,6 +188,16 @@ async def lifespan(app: FastAPI):
     app_state["embedder"] = embedder
     app_state["bm25"] = bm25
     app_state["retrieval_engine"] = retrieval_engine
+
+    # Response cache: keyed on query + index version + pipeline signature
+    settings = get_settings()
+    app_state["response_cache"] = ResponseCache(
+        store = store,
+        pipeline_signature = _pipeline_signature(generator, rag_pipeline, domain_scorer, llm_classifier),
+        max_entries = settings.cache_max_entries,
+        ttl_seconds = settings.cache_ttl_seconds,
+        enabled = settings.cache_enabled,
+    )
 
     startup_perf["rss_ready_mb"] = rss_mb()
     startup_perf["process_peak_mb"] = peak_rss_mb()
@@ -196,6 +213,25 @@ async def lifespan(app: FastAPI):
     # Shutdown
     store.close()
     print("Shutdown complete")
+
+
+def _pipeline_signature(generator, rag_pipeline, domain_scorer, classifier) -> str:
+    """Fingerprint of everything that shapes an answer.
+
+    If the prompt, model, gate threshold or scoping settings change,
+    the signature changes and cached answers are no longer served.
+    """
+    from src.cache import make_key
+    return make_key(
+        "pipeline-v1",
+        getattr(generator, "model", None),
+        generator._build_system_prompt(),
+        rag_pipeline.gate.min_score,
+        (domain_scorer.enabled, domain_scorer.penalty, domain_scorer.min_margin,
+         sorted(domain_scorer._alias_patterns)),
+        getattr(classifier, "model", None),
+        getattr(classifier, "scope_description", None),
+    )[:16]
 
 app = FastAPI(
     title = "VerixRAG",
@@ -259,21 +295,39 @@ async def health():
 @app.post("/api/chat")
 async def chat(request: ChatRequest, api_key: str = Security(verify_api_key)):
     pipeline = app_state["pipeline"]
+    cache = app_state.get("response_cache")
     with start_trace("chat", top_k=request.top_k) as trace:
-        for attempt in range(3):
-            try:
-                result = pipeline.answer(query = request.query, top_k = request.top_k)
-                break
-            except Exception as e:
-                if "rate" in str(e).lower() or "429" in str(e) or "quota" in str(e).lower():
-                    trace.set(rate_limit_retries=attempt + 1)
-                    swap_groq_key()
-                    time.sleep(5)
-                    continue
-                raise
+        hit = False
+        if cache is not None and request.use_cache:
+            with span("cache.response_lookup") as attrs:
+                hit, cached, age = cache.get(request.query, request.top_k, request.strategy)
+                attrs["hit"] = hit
+        if hit:
+            result = cached
+            result["cache"] = {"hit": True, "age_s": age,
+                               "original_trace_id": result.pop("_original_trace_id", None)}
+            trace.set(decision="cache_hit", original_trace_id=result["cache"]["original_trace_id"])
+            get_trace_store().incr("response_cache_hits")
         else:
-            trace.set(decision="rate_limited")
-            raise HTTPException(status_code=429, detail="All API keys exhausted")
+            for attempt in range(3):
+                try:
+                    result = pipeline.answer(query = request.query, top_k = request.top_k)
+                    break
+                except Exception as e:
+                    if "rate" in str(e).lower() or "429" in str(e) or "quota" in str(e).lower():
+                        trace.set(rate_limit_retries=attempt + 1)
+                        swap_groq_key()
+                        time.sleep(5)
+                        continue
+                    raise
+            else:
+                trace.set(decision="rate_limited")
+                raise HTTPException(status_code=429, detail="All API keys exhausted")
+            if cache is not None:
+                result["trace_id"] = trace.trace_id
+                stored = request.use_cache and cache.put(
+                    request.query, request.top_k, request.strategy, result)
+                result["cache"] = {"hit": False, "stored": bool(stored)}
     result["answer"] = html.escape(result["answer"])  # Sanitize output to prevent XSS
     result["trace_id"] = trace.trace_id
     result["perf"] = trace.summary()        # final numbers, trace is finished
@@ -330,8 +384,6 @@ async def ingest(request: IngestRequest, api_key: str = Security(verify_api_key)
             "requires_confirmation": True,
         }
 
-    from  src.ingestion.ingest import IngestionPipeline
-
     pipeline = IngestionPipeline(
         chunk_strategy = request.chunk_strategy,
         chunk_size = request.chunk_size,
@@ -363,9 +415,7 @@ def _after_ingest():
 @app.post("/api/evaluate")
 async def evaluate(request: dict, api_key: str = Security(verify_api_key)):
     """Admin endpoint - run RAGAS evaluation."""
-    from src.evaluation.eval_dataset import EvalDataset, build_sample_dataset
-    from src.evaluation.metrics import RAGMetrics
-    from src.evaluation.ragas_eval import EvaluationRunner
+    
 
     label = request.get("label", "default")
     dataset_path = request.get("dataset", None)
