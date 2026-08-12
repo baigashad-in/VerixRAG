@@ -420,6 +420,17 @@ async def evaluate(request: dict, api_key: str = Security(verify_api_key)):
     label = request.get("label", "default")
     dataset_path = request.get("dataset", None)
 
+    # Adversarial suite: deterministic checks through the guarded
+    # (production) pipeline; costs generation calls but no judge calls.
+    if request.get("suite") == "adversarial":
+        from src.evaluation.adversarial import AdversarialRunner, load_cases
+        cases = load_cases(dataset_path or "datasets/adversarial_eval.json")
+        runner = AdversarialRunner(app_state["pipeline"], cases,
+                                   delay_seconds=float(request.get("delay_seconds", 4.0)))
+        report = runner.run(label)
+        AdversarialRunner.save(report)
+        return report
+
     if dataset_path:
         dataset = EvalDataset().load(dataset_path)
     else:
