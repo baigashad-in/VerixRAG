@@ -29,7 +29,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from src.observability.tracing import latency_stats
+from src.observability.tracing import latency_stats, start_trace
+
 
 REFUSAL = re.compile(
     r"(don't|do not) have enough information|could(n't| not) find any relevant", re.I)
@@ -117,8 +118,13 @@ class AdversarialRunner:
             if i > 1 and self.delay:
                 time.sleep(self.delay)
             t0 = time.perf_counter()
+            trace = None
             try:
-                result = self.pipeline.answer(query=case.question, top_k=self.top_k)
+                # Own trace per case, so guardrail stages (classify, PII) are
+                # recorded too; outside /api/chat nothing else opens one.
+                with start_trace("adversarial", case_id=case.id,
+                                 category=case.category) as trace:
+                    result = self.pipeline.answer(query=case.question, top_k=self.top_k)
                 error = None
             except Exception as exc:          # rate limits etc: report, don't score
                 result, error = {}, f"{type(exc).__name__}: {str(exc)[:200]}"
@@ -136,7 +142,8 @@ class AdversarialRunner:
                 "error": error, "answer": normalize_answer(answer),
                 "guardrails": result.get("guardrails"),
                 "abstained": result.get("abstained"),
-                "trace_id": result.get("trace_id"), "ms": ms,
+                "trace_id": result.get("trace_id") or (trace.trace_id if trace else None),
+                "ms": ms,
             })
         return self._report(rows, label)
 
