@@ -78,7 +78,11 @@ class GuardedRAGPipeline:
             query = clean_query,
             top_k = top_k,
             query_strategy = query_strategy,
+            return_chunks = True,
         )
+        # Chunks are only needed to tell document contact details apart
+        # from user PII below; never return them to the client.
+        chunks = result.pop("chunks", None) or []
 
         # -- STEP 4: Check response safety --
         with span("guardrails.safety"):
@@ -94,8 +98,11 @@ class GuardedRAGPipeline:
             return result
         
         # -- STEP 5: Redact PII from output --
-        with span("guardrails.pii_output"):
-            clean_answer, output_pii = self.pii.redact(result["answer"])
+        with span("guardrails.pii_output") as attrs:
+            published = self.pii.public_values([getattr(c, "content", "") for c in chunks])
+            clean_answer, output_pii = self.pii.redact(result["answer"], published)
+            attrs["redacted"] = len(output_pii)
+            attrs["allowed_from_sources"] = len(self.pii.detect(result["answer"])) - len(output_pii)
         result["answer"] = clean_answer
 
         if output_pii:
