@@ -39,7 +39,7 @@ class PIIDetector:
     - Won't catch addresses without zip codes.
     - Won't understand context ("my birthday" vs "the company's founding date")
 
-    For production, you'd add a Named Entity Recognition (NER) model
+    For production, add a Named Entity Recognition (NER) model
     like spaCy's en_core_web_sm for names and addresses. We keep it
     regex-only for simplicity and zero dependencies.
     """
@@ -100,7 +100,30 @@ class PIIDetector:
         matches.sort(key = lambda m: m.start)
         return matches
     
-    def redact(self, text: str) -> tuple[str, list[PIIMatch]]:
+    @staticmethod
+    def canonical(pii_type: str, value: str) -> str:
+        """Comparable form: digits for numbers, lowercase for the rest."""
+        if pii_type in ("phone_us", "ssn", "credit_card"):
+            digits = re.sub(r"\D", "", value)
+            if pii_type == "phone_us" and len(digits) == 11 and digits.startswith("1"):
+                digits = digits[1:]          # +1 / 1- country code
+            return digits
+        return value.strip().lower()
+
+    def public_values(self, texts: list[str]) -> set[str]:
+        """PII-shaped values that appear in our own documents.
+
+        A support phone number or email published in the knowledge base
+        is company contact information, not a user's personal data.
+        """
+        values = set()
+        for text in texts:
+            for m in self.detect(text):
+                values.add(self.canonical(m.pii_type, m.value))
+        return values
+
+    def redact(self, text: str, allowed_values: set[str] | None = None
+               ) -> tuple[str, list[PIIMatch]]:
         """Replace PII with redaction markers.
         
         "My email is john@test.com"
@@ -109,8 +132,15 @@ class PIIDetector:
         Returns the redacted text AND the list of detections,
         so you can log what was removed without logging the
         actual values.
+        
+        allowed_values: canonical values (see public_values) to leave
+        untouched, e.g. contact details quoted from the documents.
         """
         matches = self.detect(text)
+
+        if allowed_values:
+            matches = [m for m in matches
+                       if self.canonical(m.pii_type, m.value) not in allowed_values]
 
         if not matches:
             return text, []
