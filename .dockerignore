@@ -2,3 +2,5 @@ __pycache__/
 *.pyc
 .git
 experiments/
+# Secrets are passed at runtime via env_file, never copied into the image
+.env
