@@ -1,0 +1,2 @@
+# Test-only dependencies (the app image doesn't need them)
+pytest>=8
