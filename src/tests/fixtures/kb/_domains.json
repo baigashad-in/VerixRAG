@@ -1,0 +1,17 @@
+{
+  "files": {
+    "account_guide.md": "store",
+    "refund_policy.md": "store",
+    "policies.md": "store",
+    "shipping_policy.md": "store",
+    "product_manual.md": "clouddeck",
+    "technical_api_docs.md": "verixapi",
+    "hr_handbook.md": "hr"
+  },
+  "domains": {
+    "store": {"aliases": ["verixstore"]},
+    "clouddeck": {"aliases": ["clouddeck", "cloud deck"]},
+    "verixapi": {"aliases": ["verixapi", "verix api"]},
+    "hr": {"aliases": ["nexora", "employee handbook"]}
+  }
+}
