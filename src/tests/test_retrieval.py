@@ -35,10 +35,12 @@ class TestBM25Retriever:
         contents = [r.content for r in results]
         assert any("refund" in c.lower() for c in contents)
 
-    def test_search_before_index_raises(self):
+    def test_search_before_index_returns_empty(self):
+        # Deliberate: with an empty knowledge base (first start, before
+        # ingestion) hybrid search must still work on dense results alone
+        # instead of crashing, so an unindexed BM25 returns no results.
         retriever = BM25Retriever()
-        with pytest.raises(RuntimeError):
-            retriever.search("test query")
+        assert retriever.search("test query") == []
 
     def test_no_results_for_unrelated_query(self, indexed_retriever):
         results = indexed_retriever.search("quantum physics", top_k=3)
