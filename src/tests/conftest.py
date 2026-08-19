@@ -14,8 +14,10 @@ import sys
 import types
 
 import pytest
-
+import psycopg
+from psycopg import sql
 from src.tests import fakes
+from src.config import reset_settings
 
 try:
     importlib.import_module("sentence_transformers")
@@ -63,7 +65,6 @@ def pytest_collection_modifyitems(config, items):
 
 @pytest.fixture(autouse=True)
 def _fresh_settings():
-    from src.config import reset_settings
     reset_settings()
     yield
     reset_settings()
@@ -86,19 +87,16 @@ def db_url():
         pytest.skip("TEST_DATABASE_URL not set (needs Postgres with pgvector)")
     # These tests DROP the chunks and documents tables. Refuse to touch a
     # database that isn't clearly a test one, e.g. the real ragdb.
-    import psycopg
     dbname = psycopg.conninfo.conninfo_to_dict(url).get("dbname", "")
     if "test" not in dbname.lower():
         pytest.exit(f"TEST_DATABASE_URL points at database '{dbname}'; its name must "
                     f"contain 'test' (these tests drop tables)", returncode=2)
-        _ensure_database(url, dbname)
+    _ensure_database(url, dbname)
     return url
 
 
 def _ensure_database(url: str, dbname: str) -> None:
     """Create the test database if it does not exist."""
-    import psycopg
-    from psycopg import sql
     try:
         psycopg.connect(url).close()
         return
@@ -113,7 +111,6 @@ def _ensure_database(url: str, dbname: str) -> None:
 @pytest.fixture
 def clean_db(db_url):
     """Empty chunks table before and after the test."""
-    import psycopg
     with psycopg.connect(db_url) as conn:
         conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
         conn.execute("DROP TABLE IF EXISTS chunks")
