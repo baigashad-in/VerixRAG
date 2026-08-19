@@ -91,7 +91,23 @@ def db_url():
     if "test" not in dbname.lower():
         pytest.exit(f"TEST_DATABASE_URL points at database '{dbname}'; its name must "
                     f"contain 'test' (these tests drop tables)", returncode=2)
+        _ensure_database(url, dbname)
     return url
+
+
+def _ensure_database(url: str, dbname: str) -> None:
+    """Create the test database if it does not exist."""
+    import psycopg
+    from psycopg import sql
+    try:
+        psycopg.connect(url).close()
+        return
+    except psycopg.OperationalError as exc:
+        if "does not exist" not in str(exc):
+            raise
+    admin = psycopg.conninfo.make_conninfo(url, dbname="postgres")
+    with psycopg.connect(admin, autocommit=True) as conn:
+        conn.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(dbname)))
 
 
 @pytest.fixture
