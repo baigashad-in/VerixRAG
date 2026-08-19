@@ -70,8 +70,21 @@ def report(traces: list[dict], slowest: int):
     print(f"{len(traces)} traces ({len(chats)} chat), "
           f"{chats[0].get('started_at', '?')[:19]} → {chats[-1].get('started_at', '?')[:19]}\n")
 
-    total = latency_stats([t["total_ms"] for t in chats])
-    print(f"End-to-end ms: p50 {total.get('p50')}  p95 {total.get('p95')}  max {total.get('max')}")
+    def latency_line(label: str, traces: list[dict]):
+        st = latency_stats([t["total_ms"] for t in traces])
+        if not st["n"]:
+            return
+        note = "  (p99 needs >= 100 requests)" if st["n"] < 100 else ""
+        print(f"{label:<14} n={st['n']:<5} p50 {st['p50']}  p95 {st['p95']}  "
+              f"p99 {st['p99']}  max {st['max']}{note}")
+
+    cached = [t for t in chats if t.get("attrs", {}).get("decision") == "cache_hit"]
+    fresh = [t for t in chats if t.get("attrs", {}).get("decision") != "cache_hit"]
+    print("End-to-end latency (ms):")
+    latency_line("  all", chats)
+    if cached:
+        latency_line("  fresh", fresh)
+        latency_line("  cache hits", cached)
 
     stage_values: dict[str, list[float]] = defaultdict(list)
     for t in chats:
