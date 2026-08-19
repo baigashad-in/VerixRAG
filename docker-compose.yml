@@ -43,3 +43,5 @@ services:
 
 volumes:
   pgdata:
+    external: true
+    name: verixrag_pgdata
