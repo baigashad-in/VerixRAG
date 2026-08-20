@@ -88,5 +88,8 @@ def test_app_end_to_end(clean_db, fake_models, tmp_path, monkeypatch):
 
         trace = client.get(f"/api/traces/{first['trace_id']}", headers=h).json()
         names = {s["name"] for s in trace["spans"]}
+        classify = next(s for s in trace["spans"] if s["name"] == "guardrails.classify")
+        assert classify["attrs"]["stage"] == "keyword"          # seeded terms skip the LLM
+        assert startup["scope_terms"]["terms"] > 0
         assert {"guardrails.classify", "retrieval.rerank", "retrieval.scoping",
                 "confidence_gate", "generation.llm"} <= names

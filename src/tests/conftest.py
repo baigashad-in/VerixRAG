@@ -32,13 +32,24 @@ except ImportError:
 # Tests that need other values set them with monkeypatch.setenv.
 TEST_DEFAULTS = {
     "RERANK_MIN_SCORE": "-6.0",
-    "SCOPING_ENABLED": "true", "DOMAIN_PENALTY": "2.0", "DOMAIN_MIN_MARGIN": "0.05",
+    "SCOPING_ENABLED": "true", 
+    "DOMAIN_PENALTY": "2.0", 
+    "DOMAIN_MIN_MARGIN": "0.05",
     "DOMAINS_CONFIG": "config/domains.json",
-    "DEDUP_ENABLED": "true", "DEDUP_COSINE": "0.95", "DEDUP_JACCARD": "0.85",
-    "CACHE_ENABLED": "true", "CACHE_TTL_SECONDS": "3600", "CACHE_MAX_ENTRIES": "512",
-    "TRACE_BUFFER_SIZE": "500", "TRACE_TRACEMALLOC": "false",
+    "DEDUP_ENABLED": "true", 
+    "DEDUP_COSINE": "0.95", 
+    "DEDUP_JACCARD": "0.85",
+    "CACHE_ENABLED": "true", 
+    "CACHE_TTL_SECONDS": "3600", 
+    "CACHE_MAX_ENTRIES": "512",
+    "TRACE_BUFFER_SIZE": "500", 
+    "TRACE_TRACEMALLOC": "false",
     "TRACE_LOG_PATH": "",                     # never write trace files from tests
-    "CLASSIFIER_TIMEOUT": "5", "CLASSIFIER_RETRIES": "1",
+    "CLASSIFIER_TIMEOUT": "5", 
+    "CLASSIFIER_RETRIES": "1",
+    "KEYWORD_SCOPE_ENABLED": "true", 
+    "KEYWORD_SCOPE_BODY_TERMS": "10",
+    "KEYWORD_SCOPE_MIN_MATCHES": "2",
 }
 os.environ.update(TEST_DEFAULTS)
 

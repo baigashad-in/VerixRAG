@@ -4,6 +4,8 @@ import pytest
 from src.guardrails.pii_detector import PIIDetector
 from src.guardrails.safety_filter import SafetyFilter
 from src.guardrails.query_classifier import KeywordClassifier
+from src.guardrails.scope_terms import build_scope_terms
+from src.tests.conftest import FIXTURE_KB
 
 
 class TestPIIDetector:
@@ -81,13 +83,10 @@ class TestKeywordClassifier:
     def classifier(self):
         return KeywordClassifier()
     
-    @pytest.mark.xfail(strict=True, reason=(
-        "KeywordClassifier() has no in-scope terms by default, so every "
-        "query falls through to the LLM classifier. Backlog: seed terms "
-        "from the documents. Remove this marker when that lands."))
-    def test_in_scope_query(self, classifier):
-        result = classifier.classify("What is the refund policy?")
-        assert result["in_scope"] is True
+    def test_in_scope_query(self):
+        seeded = KeywordClassifier(in_scope_terms=list(build_scope_terms(FIXTURE_KB)))
+        result = seeded.classify("What is the refund policy?")
+        assert result["in_scope"] is True and result["confidence"] == "high"
 
     def test_out_of_scope_query(self, classifier):
         result = classifier.classify("Tell me a joke about cats")
