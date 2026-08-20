@@ -22,28 +22,20 @@ import re
 import json
 from litellm import completion
 
+from src.config import get_settings
+from src.guardrails.scope_terms import alias_terms, build_scope_terms, stem
+from src.retrieval.scoping import load_domain_config
+
 class KeywordClassifier:
-    """Fast, zero-cost, zero-latency scope checker.
-    
-    This runs BEFORE any LLM call or retrieval. It checks
-    whether the query contains any terms related to your
-    domain. If it's clearly off-topic, reject immediately.
-    
-    This catches obvious cases like "tell me a joke" or
-    "what's 2+2" without spending any resources.
-    """
+    """Rule-based scope check that runs before the LLM classifier."""
 
     def __init__(self, in_scope_terms: list[str] = None,
-                 out_of_scope_patterns: list[str] = None):
-        
-        """
-        Args:
-            in_scope_terms: words that suggest an in-scope query.
-                Build this list from your actual documents.
-            out_of_scope_patterns: regex patterns for clearly
-                off-topic queries.
-        """
-        self.in_scope_terms = set(t.lower() for t in (in_scope_terms or []))
+                 out_of_scope_patterns: list[str] = None, min_matches: int = 1,
+                 strong_terms: list[str] = None):
+        self.in_scope_terms = {stem(t.lower()) for t in (in_scope_terms or [])}
+        self.min_matches = max(1, min_matches)
+        # Product names etc.: one match is enough
+        self.strong_terms = {stem(t.lower()) for t in (strong_terms or [])}
 
         self.out_of_scope_patterns = out_of_scope_patterns or [
             r"tell me a joke",
@@ -56,18 +48,9 @@ class KeywordClassifier:
             re.compile(p, re.IGNORECASE)
             for p in self.out_of_scope_patterns
         ]
-    
-    def classify(self, query: str) -> dict:
-        """Quick scope check - no LLM needed.
-        
-        Returns:
-            {"in_scope": bool, "confidence": str, "reason": str}
 
-        confidence is "high" or "low":
-        - high: we're sure it's out of scope (matched a pattern)
-        - low: no keywords matched, but might still be in scope
-                (fall through to LLM classifier)
-        """
+    def classify(self, query: str) -> dict:
+        """Return in_scope True/False with high confidence, or None to defer to the LLM."""
 
         query_lower = query.lower()
 
@@ -79,24 +62,40 @@ class KeywordClassifier:
                     "confidence": "high",
                     "reason": "Matched out-of-scope pattern",
                 }
-            
-        # Check for in-scope keyword matches
-        query_words = set(re.findall(r'[a-z]+', query_lower))
-        matches = query_words & self.in_scope_terms
 
-        if matches:
+        # Check for in-scope keyword matches
+        query_words = {stem(w) for w in re.findall(r'[a-z][a-z0-9]+', query_lower)}
+        matches = sorted(query_words & self.in_scope_terms)
+
+        strong = query_words & self.strong_terms
+        if strong or len(matches) >= self.min_matches:
+            matches = sorted(set(matches) | strong)
             return {
                 "in_scope": True,
                 "confidence": "high",
                 "reason": f"Matched terms: {', '.join(matches)}",
             }
-        
+
         # Uncertain = no keywords matched but not clearly off-topic
         return {
             "in_scope": None, # uncertain
             "confidence": "low",
             "reason": "No keyword matches - needs LLM classification",
         }
+
+
+def keyword_classifier_from_settings(documents_dir: str) -> KeywordClassifier:
+    """Build the keyword stage from the documents; empty when disabled or missing."""
+    settings = get_settings()
+    if not settings.keyword_scope_enabled or not os.path.isdir(documents_dir):
+        return KeywordClassifier()
+    aliases = load_domain_config(settings.domains_config).aliases
+    return KeywordClassifier(
+        in_scope_terms=list(build_scope_terms(documents_dir, aliases,
+                                              top_n=settings.keyword_scope_body_terms)),
+        strong_terms=list(alias_terms(aliases)),
+        min_matches=settings.keyword_scope_min_matches,
+    )
     
 class LLMClassifier:
     """LLM-based scope classifier for ambiguous queries.
