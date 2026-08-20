@@ -30,8 +30,9 @@ from src.generation.generator import RAGGenerator
 from src.generation.hallucination_check import HallucinationDetector
 from src.pipeline import RAGPipeline
 from src.guardrails.guardrails_pipeline import GuardedRAGPipeline
-from src.guardrails.query_classifier import LLMClassifier, QueryClassifierPipeline
-
+from src.guardrails.query_classifier import (
+        LLMClassifier, QueryClassifierPipeline, keyword_classifier_from_settings,
+    )
 from src.evaluation.eval_dataset import EvalDataset, build_sample_dataset
 from src.evaluation.metrics import RAGMetrics
 from src.evaluation.ragas_eval import EvaluationRunner
@@ -178,7 +179,11 @@ async def lifespan(app: FastAPI):
 
     # Full pipeline with guardrails
     llm_classifier = LLMClassifier(scope_description=scope)
-    classifier = QueryClassifierPipeline(llm_classifier=llm_classifier)
+    with measure("scope_terms", startup_perf) as m:
+        keyword_classifier = keyword_classifier_from_settings(doc_dir)
+        m["terms"] = len(keyword_classifier.in_scope_terms)
+    classifier = QueryClassifierPipeline(keyword_classifier=keyword_classifier,
+                                         llm_classifier=llm_classifier)
 
     rag_pipeline = RAGPipeline(enhanced, generator, detector)
     guarded_pipeline = GuardedRAGPipeline(rag_pipeline, classifier=classifier)
@@ -193,7 +198,8 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     app_state["response_cache"] = ResponseCache(
         store = store,
-        pipeline_signature = _pipeline_signature(generator, rag_pipeline, domain_scorer, llm_classifier),
+        pipeline_signature = _pipeline_signature(generator, rag_pipeline, domain_scorer,
+                                                 llm_classifier, keyword_classifier),
         max_entries = settings.cache_max_entries,
         ttl_seconds = settings.cache_ttl_seconds,
         enabled = settings.cache_enabled,
@@ -215,7 +221,8 @@ async def lifespan(app: FastAPI):
     print("Shutdown complete")
 
 
-def _pipeline_signature(generator, rag_pipeline, domain_scorer, classifier) -> str:
+def _pipeline_signature(generator, rag_pipeline, domain_scorer, classifier, 
+                        keyword_classifier = None) -> str:
     """Fingerprint of everything that shapes an answer.
 
     If the prompt, model, gate threshold or scoping settings change,
@@ -231,6 +238,9 @@ def _pipeline_signature(generator, rag_pipeline, domain_scorer, classifier) -> s
          sorted(domain_scorer._alias_patterns)),
         getattr(classifier, "model", None),
         getattr(classifier, "scope_description", None),
+        sorted(getattr(keyword_classifier, "in_scope_terms", [])),
+        sorted(getattr(keyword_classifier, "strong_terms", [])),
+        getattr(keyword_classifier, "min_matches", None),
     )[:16]
 
 app = FastAPI(
