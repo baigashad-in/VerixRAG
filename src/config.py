@@ -50,6 +50,11 @@ class Settings:
     domain_min_margin: float       # centroid similarity margin needed to pick a domain
     domains_config: str            # path to the filename -> domain mapping
 
+    # -- Keyword scope classifier --
+    keyword_scope_enabled: bool        # seed in-scope terms from the documents
+    keyword_scope_body_terms: int      # distinctive body words per document
+    keyword_scope_min_matches: int     # terms a query must match to skip the LLM
+
     # -- Deduplication --
     dedup_enabled: bool
     dedup_cosine: float            # near-duplicate if cosine >= this ...
@@ -81,6 +86,9 @@ def get_settings() -> Settings:
             domain_penalty=_float("DOMAIN_PENALTY", 2.0),
             domain_min_margin=_float("DOMAIN_MIN_MARGIN", 0.05),
             domains_config=os.getenv("DOMAINS_CONFIG", "config/domains.json"),
+            keyword_scope_enabled=_bool("KEYWORD_SCOPE_ENABLED", True),
+            keyword_scope_body_terms=_int("KEYWORD_SCOPE_BODY_TERMS", 10),
+            keyword_scope_min_matches=_int("KEYWORD_SCOPE_MIN_MATCHES", 2),
             dedup_enabled=_bool("DEDUP_ENABLED", True),
             dedup_cosine=_float("DEDUP_COSINE", 0.95),
             dedup_jaccard=_float("DEDUP_JACCARD", 0.85),
