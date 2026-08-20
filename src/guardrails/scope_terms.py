@@ -43,6 +43,8 @@ def stem(word: str) -> str:
     """Light plural folding so 'refunds' matches 'refund'."""
     if len(word) > 4 and word.endswith("ies"):
         return word[:-3] + "y"
+    if len(word) > 4 and word.endswith(("sses", "ches", "shes", "xes")):
+        return word[:-2]
     if len(word) > 4 and word.endswith("s") and not word.endswith("ss"):
         return word[:-1]
     return word

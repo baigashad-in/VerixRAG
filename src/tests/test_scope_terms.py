@@ -17,6 +17,8 @@ ALIASES = load_domain_config(f"{FIXTURE_KB}/_domains.json").aliases
 def test_stem_folds_plurals_only():
     assert stem("refunds") == "refund" and stem("policies") == "policy"
     assert stem("express") == "express" and stem("bus") == "bus"
+    assert stem("addresses") == stem("address") == "address"
+    assert stem("batches") == "batch" and stem("boxes") == "box"
 
 
 def test_terms_come_from_documents_and_skip_generic_words():
