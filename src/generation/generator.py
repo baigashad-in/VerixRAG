@@ -13,6 +13,13 @@ from src.observability.tracing import current_trace, span
 import re
 
 
+# Typographic characters models emit that break copy, search and matching.
+_TYPOGRAPHY = str.maketrans({
+    "\u202f": " ", "\u00a0": " ",              # narrow / non-breaking spaces
+    "\u2010": "-", "\u2011": "-", "\u2212": "-",  # hyphen, non-breaking hyphen, minus
+    "\u3010": "[", "\u3011": "]",              # CJK brackets around citations
+})
+
 @dataclass
 class Citation:
     """A reference from the generated answer to a source chunk."""
@@ -169,6 +176,18 @@ class RAGGenerator:
     )
     _LIST_ITEM_RE = re.compile(r"^\s*(?:[-*\u2022]|\d+[.)])\s+", re.MULTILINE)
 
+    @classmethod
+    def _cited_ids(cls, answer: str) -> set[int]:
+        """Return the source numbers cited in the answer, expanding ranges like 1-3."""
+        ids: set[int] = set()
+        for match in cls._CITATION_RE.finditer(answer):
+            for lo, hi, single in re.findall(r"(\d+)\s*[-\u2013]\s*(\d+)|(\d+)", match.group()):
+                if single:
+                    ids.add(int(single))
+                elif int(hi) - int(lo) < 50:
+                    ids.update(range(int(lo), int(hi) + 1))
+        return ids
+    
     def _enforce_citations(self, answer: str) -> str:
         """Strip uncited sentences, but never empty the answer.
 
@@ -304,12 +323,16 @@ class RAGGenerator:
             trace.add_tokens(usage.get("prompt_tokens", 0),
                              usage.get("completion_tokens", 0))
 
-        answer = (response.choices[0].message.content or "").replace("\u202f", " ").replace("\u3010", "[").replace("\u3011", "]").strip()
+        answer = (response.choices[0].message.content or "").translate(_TYPOGRAPHY).strip()
         answer = re.sub(r"\[(\d+)\]", r"[Source \1]", answer)
 
         # Post-process: strip uncited sentences
         with span("generation.enforce_citations"):
             answer = self._enforce_citations(answer)
+
+        # Return only the sources the answer actually cites
+        cited = self._cited_ids(answer)
+        citations = [c for c in citations if c.citation_id in cited]
 
         return GeneratedResponse(
             answer=answer,
