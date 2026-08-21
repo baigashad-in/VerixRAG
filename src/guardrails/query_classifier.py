@@ -38,11 +38,11 @@ class KeywordClassifier:
         self.strong_terms = {stem(t.lower()) for t in (strong_terms or [])}
 
         self.out_of_scope_patterns = out_of_scope_patterns or [
-            r"tell me a joke",
-            r"what.s the weather",
-            r"write me a (poem|story|essay|song)",
-            r"who is the president",
-            r"what.s? \d+\s*[\+\-\*\/]\s*\d+",   # math like "what's 2+2"
+            r"\btell me a joke",
+            r"\bwhat(?:'s|s| is) the weather\b",
+            r"\bwrite me an? (?:poem|story|essay|song)",
+            r"\bwho is the (?:current )?president",
+            r"\bwhat(?:'s|s| is)\s+\d+\s*[-+*/x]\s*\d+",   # math like "what's 2+2"
         ]
         self._compiled_patterns = [
             re.compile(p, re.IGNORECASE)
@@ -52,7 +52,7 @@ class KeywordClassifier:
     def classify(self, query: str) -> dict:
         """Return in_scope True/False with high confidence, or None to defer to the LLM."""
 
-        query_lower = query.lower()
+        query_lower = query.lower().replace("\u2019", "'")   # curly apostrophe
 
         # Check explicit out-of-scope patterns
         for pattern in self._compiled_patterns:
