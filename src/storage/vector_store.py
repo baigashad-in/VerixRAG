@@ -14,6 +14,7 @@ import json
 import re
 import time
 import psycopg
+import threading
 
 class VectorStore:
     ALLOWED_KEYS = {
@@ -34,11 +35,25 @@ class VectorStore:
             BGE-M3 = 1024
             OpenAI text-embedding-3-small = 1536
         """
-        self.conn = psycopg.connect(connection_string)
+        self._dsn = connection_string
+        self._local = threading.local()          # one connection per thread
+        self._connections: list = []
+        self._connections_lock = threading.Lock()
         self.dimension = embedding_dimension
         self._version_cache: tuple[float, str] | None = None
         self._initialize_db()
 
+    @property
+    def conn(self):
+        """Return this thread's connection, opening it on first use."""
+        conn = getattr(self._local, "conn", None)
+        if conn is None or conn.closed:
+            conn = psycopg.connect(self._dsn)
+            self._local.conn = conn
+            with self._connections_lock:
+                self._connections.append(conn)
+        return conn
+    
     def _initialize_db(self):
         """Create the pgvector extension and chunks table.
         The HNSW INDEX is the key performance piece:
@@ -342,9 +357,12 @@ class VectorStore:
         return deleted
         
     def close(self):
-        """Always close connections — prevent connection leaks."""
-        if self.conn and not self.conn.closed:
-            self.conn.close()
+        """Close every connection opened by any thread."""
+        with self._connections_lock:
+            for conn in self._connections:
+                if not conn.closed:
+                    conn.close()
+            self._connections.clear()
 
     def __enter__(self):
         return self
