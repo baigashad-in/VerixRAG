@@ -92,6 +92,18 @@ class TestKeywordClassifier:
         result = classifier.classify("Tell me a joke about cats")
         assert result["in_scope"] is False
 
+    @pytest.mark.parametrize("query", [
+        "What is the weather in Tokyo?", "what's the weather like today",
+        "What\u2019s the weather tomorrow?", "What is 12 * 7?", "what's 2+2",
+        "Write me an essay about refunds", "Who is the current president?"])
+    def test_common_off_topic_phrasings_are_blocked(self, classifier, query):
+        assert classifier.classify(query)["in_scope"] is False
+
+    @pytest.mark.parametrize("query", [
+        "Are deliveries delayed by bad weather?", "What is the 30 day refund window?"])
+    def test_in_scope_mentions_are_not_blocked(self, classifier, query):
+        assert classifier.classify(query)["in_scope"] is not False
+
     def test_uncertain_query(self, classifier):
         result = classifier.classify("How does this work exactly?")
         assert result["confidence"] == "low"
