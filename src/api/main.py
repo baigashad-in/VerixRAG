@@ -303,7 +303,7 @@ async def health():
 
 
 @app.post("/api/chat")
-async def chat(request: ChatRequest, api_key: str = Security(verify_api_key)):
+def chat(request: ChatRequest, api_key: str = Security(verify_api_key)):
     pipeline = app_state["pipeline"]
     cache = app_state.get("response_cache")
     with start_trace("chat", top_k=request.top_k) as trace:
@@ -361,7 +361,7 @@ async def get_trace(trace_id: str, api_key: str = Security(verify_api_key)):
     return trace
 
 @app.get("/api/documents")
-async def documents(api_key: str = Security(verify_api_key)):
+def documents(api_key: str = Security(verify_api_key)):
     """Ingested documents: version hash, domain, title, chunks kept, duplicates dropped."""
     return {"documents": app_state["store"].list_documents()}
 
@@ -379,7 +379,7 @@ async def metrics(kind: str | None = None, api_key: str = Security(verify_api_ke
 
 
 @app.post("/api/ingest")
-async def ingest(request: IngestRequest, api_key: str = Security(verify_api_key)):
+def ingest(request: IngestRequest, api_key: str = Security(verify_api_key)):
     """Ingest documents into the knowledge base."""
 
     store = app_state["store"]
@@ -423,9 +423,8 @@ def _after_ingest():
             refresh()
 
 @app.post("/api/evaluate")
-async def evaluate(request: dict, api_key: str = Security(verify_api_key)):
+def evaluate(request: dict, api_key: str = Security(verify_api_key)):
     """Admin endpoint - run RAGAS evaluation."""
-    
 
     label = request.get("label", "default")
     dataset_path = request.get("dataset", None)
