@@ -7,11 +7,36 @@ Citation grounding:
 3. Makes failures visible - if a citation is wrong, you can debug it
 """
 
+import re
+import os
+import threading
+import time
 from dataclasses import dataclass, field
 from litellm import completion
 from src.observability.tracing import current_trace, span
-import re
 
+_RETRY_IN = re.compile(r"try again in\s+([\d.]+)\s*(ms|s)\b", re.I)
+
+
+def _is_rate_limit(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return "rate" in text or "429" in text or "quota" in text
+
+
+def _retry_after(exc: Exception, default: float) -> float:
+    """Seconds the provider asked us to wait (header or message), capped at 30."""
+    headers = getattr(getattr(exc, "response", None), "headers", None) or {}
+    value = headers.get("retry-after") if hasattr(headers, "get") else None
+    try:
+        if value is not None:
+            return max(0.0, min(float(value), 30.0))
+    except ValueError:
+        pass
+    match = _RETRY_IN.search(str(exc))
+    if match:
+        seconds = float(match.group(1)) / (1000 if match.group(2).lower() == "ms" else 1)
+        return max(0.0, min(seconds, 30.0))
+    return default
 
 # Typographic characters models emit that break copy, search and matching.
 _TYPOGRAPHY = str.maketrans({
@@ -55,7 +80,8 @@ class RAGGenerator:
     MAX_QUERY_LENGTH = 2000
 
     _groq_keys = None
-    _groq_key_index = 0
+    _key_lock = threading.Lock()
+    _key_counter = 0
     
     def __init__(self, model: str = "groq/openai/gpt-oss-120b"):
         self.model = model
@@ -233,53 +259,49 @@ class RAGGenerator:
 
         return "\n\n".join(kept_blocks)
 
-    def _call_with_swap(self, messages: list, max_retries: int = 3):
-        """Call LLM with automatic Groq key swap on rate limit."""
-        import os, time
+    @classmethod
+    def _keys(cls) -> list[str]:
+        """Return the configured Groq keys, loading them once."""
+        with cls._key_lock:
+            if cls._groq_keys is None:
+                cls._groq_keys = [k for k in (os.getenv("GROQ_API_KEY"), os.getenv("GROQ_API_KEY_2"),
+                                              os.getenv("GROQ_API_KEY_3")) if k]
+                print(f"  Generator: found {len(cls._groq_keys)} Groq keys")
+            return cls._groq_keys
 
-        # Build key list once
-        if RAGGenerator._groq_keys is None:
-            RAGGenerator._groq_keys = [k for k in [
-                os.getenv("GROQ_API_KEY"),
-                os.getenv("GROQ_API_KEY_2"),
-                os.getenv("GROQ_API_KEY_3"),
-            ] if k]
-            print(f"  Generator: found {len(RAGGenerator._groq_keys)} Groq keys")
+    @classmethod
+    def _next_key_offset(cls) -> int:
+        with cls._key_lock:
+            cls._key_counter += 1
+            return cls._key_counter - 1
 
+    def _call_with_swap(self, messages: list, max_rounds: int = 3):
+        """Call the LLM, rotating Groq keys per call and on rate limits.
 
-        
-        for attempt in range(max_retries):
+        A rate-limited call moves straight to the next key; it only waits once
+        every key has been rate-limited, for as long as the provider asks.
+        """
+        keys = self._keys()
+        if not keys:
+            return completion(model=self.model, messages=messages, temperature=0.0)
+        offset = self._next_key_offset()
+        attempts = len(keys) * max_rounds
+        for attempt in range(attempts):
+            index = (offset + attempt) % len(keys)
             try:
-                key = RAGGenerator._groq_keys[RAGGenerator._groq_key_index]
-                print(f"  Using key: ...{key[-8:]}")  # last 8 chars
-                return completion(
-                    model=self.model,
-                    messages=messages,
-                    temperature=0.0,
-                    api_key=RAGGenerator._groq_keys[RAGGenerator._groq_key_index],
-                )
-            except Exception as e:
-                error_str = str(e).lower()
-                is_rate_limit = "rate" in error_str or "429" in error_str or "quota" in error_str
-
-                if not is_rate_limit:
+                return completion(model=self.model, messages=messages,
+                                  temperature=0.0, api_key=keys[index])
+            except Exception as exc:
+                if not _is_rate_limit(exc) or attempt == attempts - 1:
                     raise
-
-                if len(RAGGenerator._groq_keys) > 1:
-                    RAGGenerator._groq_key_index = (RAGGenerator._groq_key_index + 1) % len(RAGGenerator._groq_keys)
-                    print(f"  Generator: swapped to Groq key #{RAGGenerator._groq_key_index + 1}")
-
-                time.sleep(5)
-
-        # Final attempt
-        key = RAGGenerator._groq_keys[RAGGenerator._groq_key_index]
-        print(f"  Using key: ...{key[-8:]}")  # last 8 chars
-        return completion(
-            model=self.model,
-            messages=messages,
-            temperature=0.0,
-            api_key=RAGGenerator._groq_keys[RAGGenerator._groq_key_index],
-        )
+                print(f"  Generator: Groq key #{index + 1} rate-limited")
+                trace = current_trace()
+                if trace is not None:
+                    trace.set(llm_rate_limited=trace.attrs.get("llm_rate_limited", 0) + 1)
+                if (attempt + 1) % len(keys) == 0:          # every key just refused
+                    wait = _retry_after(exc, default=min(2 ** ((attempt + 1) // len(keys)), 8))
+                    with span("generation.rate_limit_wait", seconds=wait):
+                        time.sleep(wait)
     
     def generate(self, query: str, 
                  retrieval_results: list) -> GeneratedResponse:
