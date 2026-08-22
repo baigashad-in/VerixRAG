@@ -114,6 +114,11 @@ def report(traces: list[dict], slowest: int):
         print(f"Tokens per answered request: mean {sum(tokens) // len(tokens)}, "
               f"total {sum(tokens)}")
 
+        limited = [t["attrs"]["llm_rate_limited"] for t in chats
+               if t.get("attrs", {}).get("llm_rate_limited")]
+    if limited:
+        print(f"LLM rate limits: {len(limited)} requests hit one ({sum(limited)} refused calls)")
+        
     decisions = Counter(t.get("attrs", {}).get("decision") or t.get("status") for t in chats)
     print(f"Decisions: {dict(decisions)}")
     errors = [t for t in chats if t.get("status") == "error"]
