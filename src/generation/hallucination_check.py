@@ -70,6 +70,15 @@ SKIP_PATTERNS = [
 _COMPILED_SKIP = [re.compile(p, re.IGNORECASE) for p in SKIP_PATTERNS]
 
 
+# Short sentences are filler ("Yes.", "Hope this helps!") unless they carry a fact.
+MIN_CLAIM_WORDS = 4
+_FACT_SIGNAL = re.compile(r"\d|[$€£%@]|https?://|www\.|\.(?:com|org|net|io)\b", re.I)
+
+
+def has_fact_signal(sentence: str) -> bool:
+    """True if the sentence contains a number, amount, percentage, email or URL."""
+    return bool(_FACT_SIGNAL.search(sentence))
+
 def _is_transitional(sentence: str) -> bool:
     """Check if a sentence is a transitional/structural phrase."""
     s = sentence.strip().lower()
@@ -93,7 +102,14 @@ class HallucinationDetector:
     def __init__(self, model: str = "gemini/gemini-3.1-flash-lite"):
         self.model = model
     
-    def check_citation_coverage(self, answer: str, num_sources: int) -> dict:
+    def check_citation_coverage(self, answer: str, num_sources: int,
+                                min_claim_words: int = MIN_CLAIM_WORDS,
+                                short_facts: bool = True) -> dict:
+        """Count cited vs uncited factual sentences.
+
+        A sentence shorter than min_claim_words is filler unless it carries a
+        fact signal (with short_facts=True). scripts/citation_audit.py compares the two.
+        """
         
         sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+(?!\[Source)', answer) 
                      if s.strip()]
@@ -103,8 +119,9 @@ class HallucinationDetector:
         skipped = 0
         
         for sentence in sentences:
-            # ── STEP 1: Skip very short filler ──
-            if len(sentence.split()) < 8:
+            # ── STEP 1: Skip very short filler, but never a short fact ──
+            if (len(sentence.split()) < min_claim_words
+                    and not (short_facts and has_fact_signal(sentence))):
                 skipped += 1
                 continue
             
