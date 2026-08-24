@@ -34,6 +34,7 @@ pgdata/
 experiments/*.json
 experiments/*.csv
 experiments/*.jsonl*
+experiments/beir/
 !experiments/.gitkeep
 
 # Model cache (downloaded models are large)
