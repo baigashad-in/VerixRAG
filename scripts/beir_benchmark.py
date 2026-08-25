@@ -176,6 +176,10 @@ def main():
     parser.add_argument("--ann-sample", type=int, default=100, help="queries for HNSW vs exact")
     parser.add_argument("--maintenance-mem", default="1GB")
     parser.add_argument("--output-dir", default="experiments")
+    parser.add_argument("--sparse-weights", default="1.0",
+                        help="hybrid BM25 weights to sweep, e.g. 1.0,0.5,0.3")
+    parser.add_argument("--bm25-k1", type=float, default=1.2)
+    parser.add_argument("--bm25-b", type=float, default=0.75)
     args = parser.parse_args()
 
     configs = [c.strip() for c in args.configs.split(",") if c.strip()]
@@ -203,7 +207,7 @@ def main():
     bm25 = None
     if {"bm25", "hybrid", "rerank"} & set(configs):
         b0, rss0 = time.perf_counter(), rss_mb()
-        bm25 = BM25Retriever()
+        bm25 = BM25Retriever(k1=args.bm25_k1, b=args.bm25_b)
         bm25.load_from_vector_store(store)
         report["bm25_build"] = {"s": round(time.perf_counter() - b0, 1),
                                 "rss_growth_mb": round(rss_mb() - rss0, 1)}
@@ -230,13 +234,22 @@ def main():
         "hybrid": lambda q, e: engine.hybrid.search(q, e, top_k=DEPTH, fetch_k=DEPTH),
         "rerank": lambda q, e: engine._retrieve_uncached(q, RERANK_TOP_K, True, None),
     }
+    weights = [float(w) for w in args.sparse_weights.split(",") if w.strip()]
+    runs = []                                   # (label, runner, hybrid sparse weight)
     for name in configs:
+        if name == "hybrid":
+            runs += [("hybrid" if w == 1.0 else f"hybrid@{w:g}", runners[name], w) for w in weights]
+        else:
+            runs.append((name, runners[name], 1.0))
+    report["bm25_params"] = {"k1": args.bm25_k1, "b": args.bm25_b}
+    for name, runner, weight in runs:
+        engine.hybrid.sparse_weight = weight    # rerank keeps the production weight (1.0)
         print(f"Running {name} on {len(queries)} queries...", flush=True)
         scores = {"ndcg@10": [], "recall@10": [], "recall@100": [], "mrr@10": []}
         times = []
         for qid, text in queries.items():
             t0 = time.perf_counter()
-            ranked = doc_ids(runners[name](text, embeddings[qid]))
+            ranked = doc_ids(runner(text, embeddings[qid]))
             times.append((time.perf_counter() - t0) * 1000)
             scores["ndcg@10"].append(ndcg_at_k(ranked, qrels[qid], 10))
             scores["recall@10"].append(recall_at_k(ranked, qrels[qid], 10))
@@ -258,14 +271,14 @@ def main():
     report["memory_mb"] = {"rss": rss_mb(), "peak": peak_rss_mb()}
 
     print(f"\n{args.dataset}: {report['ingest']['passages']} passages, {len(queries)} queries")
-    print(f"{'config':<8}{'nDCG@10':>9}{'R@10':>8}{'R@100':>8}{'MRR@10':>8}{'p50 ms':>9}{'p95 ms':>9}")
+    print(f"{'config':<12}{'nDCG@10':>9}{'R@10':>8}{'R@100':>8}{'MRR@10':>8}{'p50 ms':>9}{'p95 ms':>9}")
     for name, m in report["configs"].items():
         lat = m["latency_ms"]
-        print(f"{name:<8}{m['ndcg@10']:>9}{m['recall@10']:>8}{'-' if m['recall@100'] is None else m['recall@100']:>8}"
+        print(f"{name:<12}{m['ndcg@10']:>9}{m['recall@10']:>8}{'-' if m['recall@100'] is None else m['recall@100']:>8}"
               f"{m['mrr@10']:>8}{lat['p50']:>9}{lat['p95']:>9}")
     print(f"\ningest: {report['ingest']}\nsizes: {report['sizes']}")
     if "bm25_build" in report:
-        print(f"bm25 in-memory build: {report['bm25_build']}")
+        print(f"bm25 build {report['bm25_params']}: {report['bm25_build']}")
     if "ann_recall@10" in report:
         print(f"HNSW recall@10 vs exact search (ef_search={args.ef_search}): {report['ann_recall@10']}")
     print(f"query embedding (not in the latencies above): {report['query_embed_ms']}")
