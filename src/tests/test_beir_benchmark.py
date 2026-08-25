@@ -62,7 +62,7 @@ def test_benchmark_end_to_end(tiny_beir, db_url, fake_models, monkeypatch, capsy
     monkeypatch.setenv("DATABASE_URL", db_url)
     out = tiny_beir / "out"
     argv = ["beir_benchmark", "--dataset", "tiny_test", "--data-dir", str(tiny_beir / "beir"),
-            "--output-dir", str(out), "--batch", "2"]
+            "--output-dir", str(out), "--batch", "2", "--sparse-weights", "1.0,0.5"]
     admin = psycopg.conninfo.make_conninfo(db_url, dbname="postgres")
     try:
         monkeypatch.setattr(sys, "argv", argv)
@@ -70,7 +70,8 @@ def test_benchmark_end_to_end(tiny_beir, db_url, fake_models, monkeypatch, capsy
         first = json.loads(next(out.glob("*.json")).read_text())
         assert first["ingest"]["passages"] == 5 and not first["ingest"].get("skipped")
         assert first["queries"] == 3
-        for name in ("dense", "bm25", "hybrid", "rerank"):
+        assert first["bm25_params"] == {"k1": 1.2, "b": 0.75}
+        for name in ("dense", "bm25", "hybrid", "hybrid@0.5", "rerank"):
             m = first["configs"][name]
             assert m["ndcg@10"] == pytest.approx(1.0), name     # each query has an exact match
             assert m["mrr@10"] == pytest.approx(1.0), name
