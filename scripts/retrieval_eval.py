@@ -153,6 +153,8 @@ def main():
     parser.add_argument("--limit", type=int)
     parser.add_argument("--label", default="default")
     parser.add_argument("--output-dir", default="experiments")
+    parser.add_argument("--sparse-weight", type=float,
+                        help="BM25 weight in hybrid fusion (default: HYBRID_SPARSE_WEIGHT)")
     args = parser.parse_args()
 
     configs = [c.strip() for c in args.configs.split(",") if c.strip()]
@@ -164,14 +166,18 @@ def main():
     stack = build_retrieval_stack(with_reranker=bool({"rerank", "full"} & set(configs)))
     engine, store, bm25 = stack["engine"], stack["store"], stack["bm25"]
     engine.cache = None                      # measure retrieval, not cache hits
+    if args.sparse_weight is not None:
+        engine.hybrid.sparse_weight = args.sparse_weight
 
     questions = load_questions(args.dataset, args.limit)
     corpus = corpus_index(store)
     retrievers = make_retrievers(engine, store, bm25)
-    print(f"{len(questions)} in-scope questions, {len(corpus)} chunks, configs: {configs}")
+    print(f"{len(questions)} in-scope questions, {len(corpus)} chunks, configs: {configs}, "
+          f"sparse weight {engine.hybrid.sparse_weight}")
 
     report = {"label": args.label, "dataset": args.dataset, "timestamp": datetime.now().isoformat(),
-              "chunks": len(corpus), "ks": KS, "configs": {}}
+              "chunks": len(corpus), "ks": KS, "sparse_weight": engine.hybrid.sparse_weight,
+              "configs": {}}
     full_results = None
     for name in configs:
         print(f"  running {name}...", flush=True)
