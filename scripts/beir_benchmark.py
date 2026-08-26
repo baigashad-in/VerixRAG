@@ -178,6 +178,8 @@ def main():
     parser.add_argument("--output-dir", default="experiments")
     parser.add_argument("--sparse-weights", default="1.0",
                         help="hybrid BM25 weights to sweep, e.g. 1.0,0.5,0.3")
+    parser.add_argument("--rerank-weights", default="1.0",
+                        help="BM25 weights for the candidates the reranker scores")
     parser.add_argument("--bm25-k1", type=float, default=1.2)
     parser.add_argument("--bm25-b", type=float, default=0.75)
     args = parser.parse_args()
@@ -234,16 +236,14 @@ def main():
         "hybrid": lambda q, e: engine.hybrid.search(q, e, top_k=DEPTH, fetch_k=DEPTH),
         "rerank": lambda q, e: engine._retrieve_uncached(q, RERANK_TOP_K, True, None),
     }
-    weights = [float(w) for w in args.sparse_weights.split(",") if w.strip()]
+    sweeps = {"hybrid": args.sparse_weights, "rerank": args.rerank_weights}
     runs = []                                   # (label, runner, hybrid sparse weight)
     for name in configs:
-        if name == "hybrid":
-            runs += [("hybrid" if w == 1.0 else f"hybrid@{w:g}", runners[name], w) for w in weights]
-        else:
-            runs.append((name, runners[name], 1.0))
+        weights = [float(w) for w in sweeps.get(name, "1.0").split(",") if w.strip()]
+        runs += [(name if w == 1.0 else f"{name}@{w:g}", runners[name], w) for w in weights]
     report["bm25_params"] = {"k1": args.bm25_k1, "b": args.bm25_b}
     for name, runner, weight in runs:
-        engine.hybrid.sparse_weight = weight    # rerank keeps the production weight (1.0)
+        engine.hybrid.sparse_weight = weight    
         print(f"Running {name} on {len(queries)} queries...", flush=True)
         scores = {"ndcg@10": [], "recall@10": [], "recall@100": [], "mrr@10": []}
         times = []
@@ -254,7 +254,7 @@ def main():
             scores["ndcg@10"].append(ndcg_at_k(ranked, qrels[qid], 10))
             scores["recall@10"].append(recall_at_k(ranked, qrels[qid], 10))
             scores["mrr@10"].append(mrr_at_k(ranked, qrels[qid], 10))
-            if name != "rerank":
+            if not name.startswith("rerank"):
                 scores["recall@100"].append(recall_at_k(ranked, qrels[qid], 100))
         report["configs"][name] = {**{k: mean(v) for k, v in scores.items()},
                                    "latency_ms": latency_stats(times)}

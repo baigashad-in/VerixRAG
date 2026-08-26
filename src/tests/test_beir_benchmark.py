@@ -62,7 +62,8 @@ def test_benchmark_end_to_end(tiny_beir, db_url, fake_models, monkeypatch, capsy
     monkeypatch.setenv("DATABASE_URL", db_url)
     out = tiny_beir / "out"
     argv = ["beir_benchmark", "--dataset", "tiny_test", "--data-dir", str(tiny_beir / "beir"),
-            "--output-dir", str(out), "--batch", "2", "--sparse-weights", "1.0,0.5"]
+            "--output-dir", str(out), "--batch", "2", "--sparse-weights", "1.0,0.5",
+            "--rerank-weights", "1.0,0.3"]
     admin = psycopg.conninfo.make_conninfo(db_url, dbname="postgres")
     try:
         monkeypatch.setattr(sys, "argv", argv)
@@ -71,12 +72,12 @@ def test_benchmark_end_to_end(tiny_beir, db_url, fake_models, monkeypatch, capsy
         assert first["ingest"]["passages"] == 5 and not first["ingest"].get("skipped")
         assert first["queries"] == 3
         assert first["bm25_params"] == {"k1": 1.2, "b": 0.75}
-        for name in ("dense", "bm25", "hybrid", "hybrid@0.5", "rerank"):
+        for name in ("dense", "bm25", "hybrid", "hybrid@0.5", "rerank", "rerank@0.3"):
             m = first["configs"][name]
             assert m["ndcg@10"] == pytest.approx(1.0), name     # each query has an exact match
             assert m["mrr@10"] == pytest.approx(1.0), name
             assert m["latency_ms"]["n"] == 3
-        assert first["configs"]["rerank"]["recall@100"] is None
+            assert first["configs"]["rerank@0.3"]["recall@100"] is None
         assert first["ann_recall@10"] == pytest.approx(1.0)
         assert first["sizes"]["hnsw_index_mb"] > 0
 
