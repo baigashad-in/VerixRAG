@@ -199,7 +199,8 @@ async def lifespan(app: FastAPI):
     app_state["response_cache"] = ResponseCache(
         store = store,
         pipeline_signature = _pipeline_signature(generator, rag_pipeline, domain_scorer,
-                                                 llm_classifier, keyword_classifier),
+                                                 llm_classifier, keyword_classifier,
+                                                 retrieval_engine.hybrid.sparse_weight),
         max_entries = settings.cache_max_entries,
         ttl_seconds = settings.cache_ttl_seconds,
         enabled = settings.cache_enabled,
@@ -221,8 +222,8 @@ async def lifespan(app: FastAPI):
     print("Shutdown complete")
 
 
-def _pipeline_signature(generator, rag_pipeline, domain_scorer, classifier, 
-                        keyword_classifier = None) -> str:
+def _pipeline_signature(generator, rag_pipeline, domain_scorer, classifier,
+                        keyword_classifier=None, sparse_weight=None) -> str:
     """Fingerprint of everything that shapes an answer.
 
     If the prompt, model, gate threshold or scoping settings change,
@@ -241,6 +242,7 @@ def _pipeline_signature(generator, rag_pipeline, domain_scorer, classifier,
         sorted(getattr(keyword_classifier, "in_scope_terms", [])),
         sorted(getattr(keyword_classifier, "strong_terms", [])),
         getattr(keyword_classifier, "min_matches", None),
+        sparse_weight,
     )[:16]
 
 app = FastAPI(

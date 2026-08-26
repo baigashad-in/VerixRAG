@@ -20,7 +20,7 @@ class RetrievalEngine:
     def __init__(self, vector_store, bm25_retriever,
                  embedding_service, reranker=None,
                  dense_weight: float = 1.0,
-                 sparse_weight: float = 1.0,
+                 sparse_weight: float | None = None,
                  domain_scorer=None,
                  cache: TTLCache | None = None):
         
@@ -33,6 +33,12 @@ class RetrievalEngine:
             cache = (TTLCache(s.cache_max_entries, s.cache_ttl_seconds, name="retrieval")
                      if s.cache_enabled else None)
         self.cache = cache
+
+        if sparse_weight is None:
+            from src.config import get_settings
+            sparse_weight = get_settings().hybrid_sparse_weight
+        if sparse_weight < 0:
+            raise ValueError("sparse_weight must be >= 0")
 
         self.hybrid = HybridRetriever(
             vector_store = vector_store,
@@ -81,8 +87,9 @@ class RetrievalEngine:
         version = store.index_version() if hasattr(store, "index_version") else "na"
         scoping = ((self.domain_scorer.enabled, self.domain_scorer.penalty,
                     self.domain_scorer.min_margin) if self.domain_scorer else None)
+        weights = (self.hybrid.dense_weight, self.hybrid.sparse_weight)
         return make_key("retrieval", normalize_query(query), top_k, use_reranker,
-                        metadata_filter, version, scoping)
+                        metadata_filter, version, scoping, weights)
 
     def _retrieve_uncached(self, query: str, top_k: int,
                            use_reranker: bool, metadata_filter: dict) -> list:
