@@ -32,8 +32,7 @@ from src.observability.tracing import latency_stats, peak_rss_mb, rss_mb
 BEIR_URL = "https://public.ukp.informatik.tu-darmstadt.de/thakur/BEIR/datasets/{name}.zip"
 ALL_CONFIGS = ("dense", "bm25", "hybrid", "rerank")
 DEPTH = 100               # candidates scored for Recall@100
-RERANK_TOP_K = 10         # production-style rerank: 4 x top_k candidates
-
+RERANK_TOP_K = 10         # production-style rerank (candidates: RERANK_CANDIDATES or 4 x top_k)
 
 def download(dataset: str, data_dir: Path) -> Path:
     """Return the dataset folder, downloading and unzipping it if missing."""
@@ -180,6 +179,10 @@ def main():
                         help="hybrid BM25 weights to sweep, e.g. 1.0,0.5,0.3")
     parser.add_argument("--rerank-weights", default="1.0",
                         help="BM25 weights for the candidates the reranker scores")
+    parser.add_argument("--rerank-candidates", default="",
+                        help="candidate counts to sweep, e.g. 40,20,10 (default: setting)")
+    parser.add_argument("--rerank-max-lengths", default="",
+                        help="reranker token limits to sweep, e.g. 512,256,128 (default: setting)")
     parser.add_argument("--bm25-k1", type=float, default=1.2)
     parser.add_argument("--bm25-b", type=float, default=0.75)
     args = parser.parse_args()
@@ -236,14 +239,31 @@ def main():
         "hybrid": lambda q, e: engine.hybrid.search(q, e, top_k=DEPTH, fetch_k=DEPTH),
         "rerank": lambda q, e: engine._retrieve_uncached(q, RERANK_TOP_K, True, None),
     }
+    def values(raw, cast):
+        return [cast(v) for v in raw.split(",") if v.strip()] or [None]
+
     sweeps = {"hybrid": args.sparse_weights, "rerank": args.rerank_weights}
-    runs = []                                   # (label, runner, hybrid sparse weight)
+    runs = []                                   # (label, runner, weight, candidates, max length)
     for name in configs:
-        weights = [float(w) for w in sweeps.get(name, "1.0").split(",") if w.strip()]
-        runs += [(name if w == 1.0 else f"{name}@{w:g}", runners[name], w) for w in weights]
+        weights = values(sweeps.get(name, "1.0"), float)
+        extra = ([(c, n) for c in values(args.rerank_candidates, int)
+                  for n in values(args.rerank_max_lengths, int)]
+                 if name == "rerank" else [(None, None)])
+        for w in weights:
+            for c, n in extra:
+                label = name + ("" if w == 1.0 else f"@{w:g}") + \
+                        ("" if c is None else f" c{c}") + ("" if n is None else f" len{n}")
+                runs.append((label, runners[name], w, c, n))
     report["bm25_params"] = {"k1": args.bm25_k1, "b": args.bm25_b}
-    for name, runner, weight in runs:
-        engine.hybrid.sparse_weight = weight    
+    base_candidates = engine.rerank_candidates
+    base_length = reranker.max_length if reranker else None
+    report["rerank_defaults"] = {"candidates": base_candidates or 4 * RERANK_TOP_K,
+                                 "max_length": base_length}
+    for name, runner, weight, candidates, max_length in runs:
+        engine.hybrid.sparse_weight = weight
+        engine.rerank_candidates = base_candidates if candidates is None else candidates
+        if reranker and (max_length or base_length):
+            reranker.max_length = max_length or base_length
         print(f"Running {name} on {len(queries)} queries...", flush=True)
         scores = {"ndcg@10": [], "recall@10": [], "recall@100": [], "mrr@10": []}
         times = []
@@ -271,16 +291,18 @@ def main():
     report["memory_mb"] = {"rss": rss_mb(), "peak": peak_rss_mb()}
 
     print(f"\n{args.dataset}: {report['ingest']['passages']} passages, {len(queries)} queries")
-    print(f"{'config':<12}{'nDCG@10':>9}{'R@10':>8}{'R@100':>8}{'MRR@10':>8}{'p50 ms':>9}{'p95 ms':>9}")
+    print(f"{'config':<22}{'nDCG@10':>9}{'R@10':>8}{'R@100':>8}{'MRR@10':>8}{'p50 ms':>9}{'p95 ms':>9}")
     for name, m in report["configs"].items():
         lat = m["latency_ms"]
-        print(f"{name:<12}{m['ndcg@10']:>9}{m['recall@10']:>8}{'-' if m['recall@100'] is None else m['recall@100']:>8}"
+        print(f"{name:<22}{m['ndcg@10']:>9}{m['recall@10']:>8}{'-' if m['recall@100'] is None else m['recall@100']:>8}"
               f"{m['mrr@10']:>8}{lat['p50']:>9}{lat['p95']:>9}")
     print(f"\ningest: {report['ingest']}\nsizes: {report['sizes']}")
     if "bm25_build" in report:
         print(f"bm25 build {report['bm25_params']}: {report['bm25_build']}")
     if "ann_recall@10" in report:
         print(f"HNSW recall@10 vs exact search (ef_search={args.ef_search}): {report['ann_recall@10']}")
+    if "rerank_defaults" in report and reranker:
+        print(f"rerank defaults: {report['rerank_defaults']}")
     print(f"query embedding (not in the latencies above): {report['query_embed_ms']}")
     print(f"memory: {report['memory_mb']}")
 
