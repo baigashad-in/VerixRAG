@@ -59,12 +59,13 @@ class HashSentenceTransformer:
 class FakeCrossEncoder:
     def __init__(self, model_name: str = "fake", *args, **kwargs):
         self.model_name = model_name
+        self.max_length = 512            # in words here; truncates like the real model
 
     def predict(self, pairs):
         scores = []
         for query, passage in pairs:
             q = set(tokens(query))
-            p = set(tokens(passage))
+            p = set(tokens(passage)[:self.max_length])
             overlap = len(q & p) / len(q) if q else 0.0
             scores.append(10.0 * overlap - 6.0)
         return np.array(scores, dtype=np.float32)
