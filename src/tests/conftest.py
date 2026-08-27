@@ -91,6 +91,8 @@ def fake_models(monkeypatch):
     monkeypatch.setattr(es, "SentenceTransformer", fakes.HashSentenceTransformer)
     monkeypatch.setattr(sys.modules["sentence_transformers"], "CrossEncoder",
                         fakes.FakeCrossEncoder, raising=False)
+    import src.retrieval.reranker as rr                 # covers a module-level import too
+    monkeypatch.setattr(rr, "CrossEncoder", fakes.FakeCrossEncoder, raising=False)
     return fakes
 
 

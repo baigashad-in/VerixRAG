@@ -67,11 +67,8 @@ def test_max_length_rejects_zero():
         engine.reranker.max_length = 0
 
 
-def test_max_length_setting_applied_on_load(monkeypatch):
-    import sys
+def test_max_length_setting_applied_on_load(monkeypatch, fake_models):
     from src.retrieval.reranker import CrossEncoderReranker
-    monkeypatch.setattr(sys.modules["sentence_transformers"], "CrossEncoder",
-                        fakes.FakeCrossEncoder, raising=False)
     monkeypatch.setenv("RERANK_MAX_LENGTH", "128")
     reset_settings()
     assert CrossEncoderReranker(model_name="fake").max_length == 128
