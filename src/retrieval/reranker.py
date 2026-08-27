@@ -21,6 +21,8 @@ search system.
 
 from dataclasses import dataclass
 from src.retrieval.hybrid_retrieval import HybridResult
+from sentence_transformers import CrossEncoder
+
 
 @dataclass
 class RerankedResult:
@@ -46,12 +48,36 @@ class CrossEncoderReranker:
     """
 
     def __init__(self,
-                 model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"):
-        from sentence_transformers import CrossEncoder
+                 model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2",
+                 max_length: int | None = None):
 
         self.model = CrossEncoder(model_name)
         self.model_name = model_name
-        print(f"Loaded re-ranker: {model_name}")
+        if max_length is None:
+            from src.config import get_settings
+            max_length = get_settings().rerank_max_length
+        if max_length:                                   # 0 keeps the model default
+            self.max_length = max_length
+        print(f"Loaded re-ranker: {model_name} (max length {self.max_length})")
+
+    @property
+    def max_length(self) -> int | None:
+        """Tokens per query+passage pair; longer pairs are truncated."""
+        model = getattr(self, "model", None)
+        if model is None:
+            return None
+        if hasattr(type(model), "max_seq_length"):      # sentence-transformers >= 6
+            return model.max_seq_length
+        return getattr(model, "max_length", None)
+
+    @max_length.setter
+    def max_length(self, value: int):
+        if value < 1:
+            raise ValueError("max_length must be >= 1")
+        if hasattr(type(self.model), "max_seq_length"):
+            self.model.max_seq_length = value
+        else:                                            # sentence-transformers < 6
+            setattr(self.model, "max_length", value)
 
     def rerank(self, query: str,
                results: list[HybridResult],

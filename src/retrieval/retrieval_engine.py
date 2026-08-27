@@ -22,21 +22,24 @@ class RetrievalEngine:
                  dense_weight: float = 1.0,
                  sparse_weight: float | None = None,
                  domain_scorer=None,
-                 cache: TTLCache | None = None):
-        
+                 cache: TTLCache | None = None,
+                 rerank_candidates: int | None = None):
+        from src.config import get_settings
+        s = get_settings()
+
         self.embedder = embedding_service
         self.reranker = reranker
         self.domain_scorer = domain_scorer
         if cache is None:
-            from src.config import get_settings
-            s = get_settings()
             cache = (TTLCache(s.cache_max_entries, s.cache_ttl_seconds, name="retrieval")
                      if s.cache_enabled else None)
         self.cache = cache
-
+        self.rerank_candidates = (s.rerank_candidates if rerank_candidates is None
+                                  else rerank_candidates)      # 0 = 4 x top_k
+        if self.rerank_candidates < 0:
+            raise ValueError("rerank_candidates must be >= 0")
         if sparse_weight is None:
-            from src.config import get_settings
-            sparse_weight = get_settings().hybrid_sparse_weight
+            sparse_weight = s.hybrid_sparse_weight
         if sparse_weight < 0:
             raise ValueError("sparse_weight must be >= 0")
 
@@ -87,9 +90,18 @@ class RetrievalEngine:
         version = store.index_version() if hasattr(store, "index_version") else "na"
         scoping = ((self.domain_scorer.enabled, self.domain_scorer.penalty,
                     self.domain_scorer.min_margin) if self.domain_scorer else None)
-        weights = (self.hybrid.dense_weight, self.hybrid.sparse_weight)
         return make_key("retrieval", normalize_query(query), top_k, use_reranker,
-                        metadata_filter, version, scoping, weights)
+                        metadata_filter, version, scoping, self.config_signature())
+
+    def config_signature(self) -> tuple:
+        """Settings that change which chunks come back, for cache keys."""
+        return (self.hybrid.dense_weight, self.hybrid.sparse_weight, self.rerank_candidates,
+                getattr(self.reranker, "max_length", None))
+
+    def _candidate_count(self, top_k: int, use_reranker: bool) -> int:
+        if not (use_reranker and self.reranker):
+            return top_k
+        return max(top_k, self.rerank_candidates) if self.rerank_candidates else top_k * 4
 
     def _retrieve_uncached(self, query: str, top_k: int,
                            use_reranker: bool, metadata_filter: dict) -> list:
@@ -99,7 +111,7 @@ class RetrievalEngine:
 
         # 2. Hybrid search - fetch more candidates than needed
         # so the re-ranker has good material to work with
-        fetch_k = top_k * 4 if use_reranker else top_k
+        fetch_k = self._candidate_count(top_k, use_reranker)
 
         with span("retrieval.hybrid_search", fetch_k=fetch_k) as attrs:
             hybrid_results = self.hybrid.search(

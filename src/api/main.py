@@ -37,6 +37,7 @@ from src.evaluation.eval_dataset import EvalDataset, build_sample_dataset
 from src.evaluation.metrics import RAGMetrics
 from src.evaluation.ragas_eval import EvaluationRunner
 from src.cache.response_cache import ResponseCache
+from src.cache import make_key
 from src.config import get_settings
 
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -48,6 +49,7 @@ from src.api.models import ChatRequest, IngestRequest
 from src.observability.tracing import (
     get_trace_store, measure, peak_rss_mb, rss_mb, start_trace, span,
 )
+from src.evaluation.adversarial import AdversarialRunner, load_cases
 
 load_dotenv()
 
@@ -200,7 +202,7 @@ async def lifespan(app: FastAPI):
         store = store,
         pipeline_signature = _pipeline_signature(generator, rag_pipeline, domain_scorer,
                                                  llm_classifier, keyword_classifier,
-                                                 retrieval_engine.hybrid.sparse_weight),
+                                                 retrieval_engine.config_signature()),
         max_entries = settings.cache_max_entries,
         ttl_seconds = settings.cache_ttl_seconds,
         enabled = settings.cache_enabled,
@@ -223,13 +225,12 @@ async def lifespan(app: FastAPI):
 
 
 def _pipeline_signature(generator, rag_pipeline, domain_scorer, classifier,
-                        keyword_classifier=None, sparse_weight=None) -> str:
+                        keyword_classifier=None, retrieval_config=None) -> str:
     """Fingerprint of everything that shapes an answer.
 
     If the prompt, model, gate threshold or scoping settings change,
     the signature changes and cached answers are no longer served.
     """
-    from src.cache import make_key
     return make_key(
         "pipeline-v1",
         getattr(generator, "model", None),
@@ -242,7 +243,7 @@ def _pipeline_signature(generator, rag_pipeline, domain_scorer, classifier,
         sorted(getattr(keyword_classifier, "in_scope_terms", [])),
         sorted(getattr(keyword_classifier, "strong_terms", [])),
         getattr(keyword_classifier, "min_matches", None),
-        sparse_weight,
+        retrieval_config,
     )[:16]
 
 app = FastAPI(
@@ -434,7 +435,6 @@ def evaluate(request: dict, api_key: str = Security(verify_api_key)):
     # Adversarial suite: deterministic checks through the guarded
     # (production) pipeline; costs generation calls but no judge calls.
     if request.get("suite") == "adversarial":
-        from src.evaluation.adversarial import AdversarialRunner, load_cases
         cases = load_cases(dataset_path or "datasets/adversarial_eval.json")
         runner = AdversarialRunner(app_state["pipeline"], cases,
                                    delay_seconds=float(request.get("delay_seconds", 4.0)))
