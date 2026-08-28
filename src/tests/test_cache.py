@@ -142,11 +142,11 @@ def client(fake_models, monkeypatch):
 
     set_trace_store(TraceStore(maxlen=50, log_path=""))
     engine, store, embedder = fakes.build_engine(DOCS)
-    calls = {"llm": 0}
+    calls = {"llm": 0, "answer": "Express shipping costs $15 [Source 1]."}
 
     def fake_llm(messages):
         calls["llm"] += 1
-        return fakes.fake_completion("Express shipping costs $15 [Source 1].")
+        return fakes.fake_completion(calls["answer"])
 
     gen = RAGGenerator()
     monkeypatch.setattr(gen, "_call_with_swap", fake_llm)
@@ -174,7 +174,7 @@ def test_api_second_identical_query_skips_llm(client):
     assert second["cache"]["hit"] is True
     assert second["cache"]["original_trace_id"] == first["trace_id"]
     assert second["trace_id"] != first["trace_id"]
-    assert second["answer"] == first["answer"]               # escaped exactly once
+    assert second["answer"] == first["answer"]
     assert "generation" not in second["perf"]["stages_ms"]
 
     fresh = c.post("/api/chat", json={"query": "How much is express shipping?",
@@ -212,3 +212,15 @@ def test_vector_store_index_version_changes_on_write(clean_db):
     store.replace_source("a.md", [chunk])                  # same count, new ids
     assert store.index_version() != v1
     store.close()
+
+
+def test_api_returns_answer_text_unescaped(client):
+    c, calls = client
+    calls["answer"] = "Express shipping costs $15 & doesn't need a <code> [Source 1]."
+    r = c.post("/api/chat", json={"query": "How much is express shipping?", "use_cache": False},
+               headers={"X-API-Key": "k"})
+    answer = r.json()["answer"]
+    assert "& doesn't need a <code>" in answer
+    assert "&amp;" not in answer and "&#x27;" not in answer and "&lt;" not in answer
+    assert r.headers["content-type"].startswith("application/json")
+    assert r.headers["x-content-type-options"] == "nosniff"
