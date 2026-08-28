@@ -7,7 +7,6 @@ One command that starts the whole system:
 """
 
 import os
-import html
 import time
 import traceback
 from contextlib import asynccontextmanager
@@ -341,7 +340,7 @@ def chat(request: ChatRequest, api_key: str = Security(verify_api_key)):
                 stored = request.use_cache and cache.put(
                     request.query, request.top_k, request.strategy, result)
                 result["cache"] = {"hit": False, "stored": bool(stored)}
-    result["answer"] = html.escape(result["answer"])  # Sanitize output to prevent XSS
+    # Plain text in JSON: clients escape when rendering (nosniff and CSP headers are set)
     result["trace_id"] = trace.trace_id
     result["perf"] = trace.summary()        # final numbers, trace is finished
     return JSONResponse(jsonable_encoder(result), headers={"X-Trace-Id": trace.trace_id})
