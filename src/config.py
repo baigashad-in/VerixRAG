@@ -91,6 +91,7 @@ def get_settings() -> Settings:
             domain_penalty=_float("DOMAIN_PENALTY", 2.0),
             domain_min_margin=_float("DOMAIN_MIN_MARGIN", 0.05),
             domains_config=os.getenv("DOMAINS_CONFIG", "config/domains.json"),
+            hybrid_sparse_weight=_float("HYBRID_SPARSE_WEIGHT", 1.0),
             rerank_candidates=_int("RERANK_CANDIDATES", 0),
             rerank_max_length=_int("RERANK_MAX_LENGTH", 0),            
             keyword_scope_enabled=_bool("KEYWORD_SCOPE_ENABLED", True),
