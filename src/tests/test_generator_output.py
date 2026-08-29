@@ -49,3 +49,10 @@ def test_typographic_hyphens_and_spaces_are_normalised(generator):
     assert "E-4012" in answer and "\u202f" not in answer
     generator.reply = "Employees with 0\u20132 years get 15 days [Source 1]."     # en dash kept
     assert "0\u20132" in generator.generate("q", CHUNKS).answer
+
+def test_missing_space_before_citation_is_added(generator):
+    generator.reply = "Refunds take 5 days[Source 1]. Credit never expires[Source 1][Source 3]."
+    answer = generator.generate("q", CHUNKS).answer
+    assert "days [Source 1]." in answer and "expires [Source 1] [Source 3]." in answer
+    generator.reply = "Express shipping costs $15 [Source 1]."              # already spaced
+    assert generator.generate("q", CHUNKS).answer == "Express shipping costs $15 [Source 1]."

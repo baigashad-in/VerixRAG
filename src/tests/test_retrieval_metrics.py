@@ -154,3 +154,20 @@ def test_retrieval_eval_end_to_end(clean_db, fake_models, tmp_path, monkeypatch)
         assert m["n_mrr"] == 3 and m["n_doc_hit@8"] == 4
         for key in ("hit@5", "recall@8", "precision@5", "mrr", "ndcg@8"):
             assert 0.0 <= m[key] <= 1.0
+
+    sim = report["floor_simulation"]                  # replayed from the "full" run
+    assert sim["off"]["returned"] == report["configs"]["full"]["metrics"]["returned"]
+    assert sim["off"]["recall@8"] == report["configs"]["full"]["metrics"]["recall@8"]
+    returned = [sim[f"margin {m}"]["returned"] for m in (8, 6, 4, 3, 2)]
+    assert returned == sorted(returned, reverse=True)  # tighter margin, fewer chunks
+    assert all(row["returned"] >= 1 for row in sim.values())
+    assert set(report["score_guide"]) <= {"relevant", "same_document", "unrelated"}
+
+
+
+def test_returned_noise_and_set_precision():
+    r = QuestionResult(question="q", category="c", sources=["a.md"], labels=["a.md: X"],
+                       matchable_labels=1, grades=[2, 0, 1, 0], satisfied=[{0}, set(), set(), set()],
+                       ideal=[2])
+    m = question_metrics(r, (1, 4))
+    assert m["returned"] == 4 and m["noise"] == 2 and m["set_precision"] == 0.25

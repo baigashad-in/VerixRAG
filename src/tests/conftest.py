@@ -53,6 +53,8 @@ TEST_DEFAULTS = {
     "HYBRID_SPARSE_WEIGHT": "1.0",
     "RERANK_CANDIDATES": "0", 
     "RERANK_MAX_LENGTH": "0",
+    "RERANK_CHUNK_FLOOR": "", 
+    "RERANK_CHUNK_MARGIN": "",
 }
 os.environ.update(TEST_DEFAULTS)
 
