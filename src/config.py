@@ -54,6 +54,8 @@ class Settings:
     hybrid_sparse_weight: float        # BM25 weight in RRF fusion (dense weight is 1.0)
     rerank_candidates: int             # hybrid results the reranker scores (0 = 4 x top_k)
     rerank_max_length: int             # tokens per query+passage pair (0 = model default)
+    rerank_chunk_floor: float | None   # drop chunks scoring below this (None = off)
+    rerank_chunk_margin: float | None  # drop chunks this far below the best one (None = off)
 
     # -- Keyword scope classifier --
     keyword_scope_enabled: bool        # seed in-scope terms from the documents
@@ -93,7 +95,9 @@ def get_settings() -> Settings:
             domains_config=os.getenv("DOMAINS_CONFIG", "config/domains.json"),
             hybrid_sparse_weight=_float("HYBRID_SPARSE_WEIGHT", 1.0),
             rerank_candidates=_int("RERANK_CANDIDATES", 0),
-            rerank_max_length=_int("RERANK_MAX_LENGTH", 0),            
+            rerank_max_length=_int("RERANK_MAX_LENGTH", 0),
+            rerank_chunk_floor=_float_or_none("RERANK_CHUNK_FLOOR", ""),
+            rerank_chunk_margin=_float_or_none("RERANK_CHUNK_MARGIN", ""),            
             keyword_scope_enabled=_bool("KEYWORD_SCOPE_ENABLED", True),
             keyword_scope_body_terms=_int("KEYWORD_SCOPE_BODY_TERMS", 10),
             keyword_scope_min_matches=_int("KEYWORD_SCOPE_MIN_MATCHES", 2),

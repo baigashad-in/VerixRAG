@@ -5,6 +5,7 @@ The unified retrieval engine - It orchestrates hybrid search + re-ranking.
 from src.retrieval.hybrid_retrieval import HybridRetriever
 from src.cache import TTLCache, make_key, normalize_query
 from src.observability.tracing import span, current_trace
+from src.retrieval.confidence import apply_score_floor
 
 class RetrievalEngine:
     """Production retrieval: hybrid search -> re-rank -> return.
@@ -42,6 +43,11 @@ class RetrievalEngine:
             sparse_weight = s.hybrid_sparse_weight
         if sparse_weight < 0:
             raise ValueError("sparse_weight must be >= 0")
+
+        self.chunk_floor = s.rerank_chunk_floor
+        self.chunk_margin = s.rerank_chunk_margin
+        if self.chunk_margin is not None and self.chunk_margin < 0:
+            raise ValueError("rerank_chunk_margin must be >= 0")
 
         self.hybrid = HybridRetriever(
             vector_store = vector_store,
@@ -96,7 +102,7 @@ class RetrievalEngine:
     def config_signature(self) -> tuple:
         """Settings that change which chunks come back, for cache keys."""
         return (self.hybrid.dense_weight, self.hybrid.sparse_weight, self.rerank_candidates,
-                getattr(self.reranker, "max_length", None))
+                getattr(self.reranker, "max_length", None), self.chunk_floor, self.chunk_margin)
 
     def _candidate_count(self, top_k: int, use_reranker: bool) -> int:
         if not (use_reranker and self.reranker):
@@ -146,7 +152,14 @@ class RetrievalEngine:
                 trace = current_trace()
                 if trace is not None:
                     trace.set(scoping=detection)
-            return reranked[:top_k]
+            top = reranked[:top_k]
+            if self.chunk_floor is not None or self.chunk_margin:
+                with span("retrieval.score_floor", floor=self.chunk_floor,
+                          margin=self.chunk_margin) as attrs:
+                    kept = apply_score_floor(top, self.chunk_floor, self.chunk_margin)
+                    attrs["dropped"] = len(top) - len(kept)
+                return kept
+            return top
         
         # Without re-ranking, return hybrid results directly
         return hybrid_results[:top_k]

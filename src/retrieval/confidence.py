@@ -56,3 +56,29 @@ class ConfidenceGate:
             return GateDecision(False, top, self.min_score,
                                 f"best rerank score {top} < {self.min_score}")
         return GateDecision(True, top, self.min_score, "above threshold")
+
+
+def chunk_score(result) -> float | None:
+    """Ranking score of a chunk: domain-adjusted if scoping ran, else the raw rerank score."""
+    score = getattr(result, "final_score", None)
+    return score if score is not None else getattr(result, "rerank_score", None)
+
+
+def floor_mask(scores: list[float], floor: float | None, margin: float | None) -> list[bool]:
+    """Which chunks to keep: at or above `floor` and within `margin` of the best. Keeps the best."""
+    if not scores:
+        return []
+    best = max(range(len(scores)), key=scores.__getitem__)
+    top = scores[best]
+    return [i == best or ((floor is None or s >= floor) and (not margin or s >= top - margin))
+            for i, s in enumerate(scores)]
+
+
+def apply_score_floor(results: list, floor: float | None, margin: float | None) -> list:
+    """Drop weak chunks before generation; a no-op without scores or when both limits are off."""
+    if not results or (floor is None and not margin):
+        return results
+    scores = [chunk_score(r) for r in results]
+    if any(s is None for s in scores):
+        return results
+    return [r for r, keep in zip(results, floor_mask(scores, floor, margin)) if keep]
