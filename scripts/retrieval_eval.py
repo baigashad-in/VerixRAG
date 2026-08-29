@@ -20,8 +20,10 @@ Relevance is judged by (document, section) -> src/evaluation/retrieval_metrics.p
 """
 
 import argparse
+import dataclasses
 import json
 import os
+import statistic
 import sys
 import time
 from datetime import datetime
@@ -37,13 +39,16 @@ from src.evaluation.retrieval_metrics import (
     QuestionResult, aggregate, chunk_sections, grade, parse_labels, question_metrics,
 )
 from src.observability.tracing import latency_stats
+from src.retrieval.confidence import chunk_score, floor_mask
 
 ALL_CONFIGS = ("dense", "bm25", "hybrid", "rerank", "full")
 KS = (1, 3, 5, 8)
 K_MAX = max(KS)
 OUT_OF_SCOPE = {"out_of_scope"}
 HEADLINE = ("hit@1", "hit@5", "recall@5", "recall@8", "precision@5", "mrr",
-            "ndcg@5", "ndcg@8", "doc_hit@8")
+            "ndcg@5", "ndcg@8", "doc_hit@8", "returned", "noise")
+FLOOR_RULES = [("off", None, None)] + [(f"margin {m:g}", None, m) for m in (8, 6, 4, 3, 2)] + \
+              [(f"floor {f:g}", f, None) for f in (-8, -6, -4, -2, 0)]
 
 
 def load_questions(path: str, limit: int | None = None) -> list[dict]:
@@ -134,8 +139,11 @@ def evaluate(questions: list[dict], retrieve, corpus: list[tuple[str, list[str]]
             g, sat = grade(src, chunk_sections(meta.get("section"), _content(res)), labels, sources)
             grades.append(g)
             satisfied.append(sorted(sat & matchable))
+            score = chunk_score(res) if not isinstance(res, dict) else None
             shown.append({"chunk_id": _chunk_id(res), "source": src,
-                          "section": meta.get("section", ""), "grade": g})
+                          "section": meta.get("section", ""), "grade": g,
+                          "score": None if score is None else round(float(score), 3),
+                          "chars": len(_content(res))})
 
         results.append(QuestionResult(
             question=q["question"], category=q["category"], sources=sorted(sources),
@@ -145,6 +153,50 @@ def evaluate(questions: list[dict], retrieve, corpus: list[tuple[str, list[str]]
         ))
     return results, timings
 
+
+def floor_simulation(results: list) -> dict | None:
+    """Replay this run's scores under each floor rule (a floor only removes chunks)."""
+    if not results or any(c["score"] is None for r in results for c in r.retrieved):
+        return None
+    rows = {}
+    for name, floor, margin in FLOOR_RULES:
+        per_q, chars = [], []
+        for r in results:
+            keep = floor_mask([c["score"] for c in r.retrieved], floor, margin)
+            sub = dataclasses.replace(
+                r, grades=[g for g, k in zip(r.grades, keep) if k],
+                satisfied=[s for s, k in zip(r.satisfied, keep) if k])
+            per_q.append(question_metrics(sub, KS))
+            chars.append(sum(c["chars"] for c, k in zip(r.retrieved, keep) if k))
+        m = aggregate(per_q)
+        rows[name] = {k: m.get(k) for k in ("returned", "noise", "set_precision", "recall@8",
+                                             "hit@1", "mrr", "ndcg@8")}
+        rows[name]["context_chars"] = round(statistics.mean(chars)) if chars else 0
+    return rows
+
+
+def score_guide(results: list) -> dict | None:
+    """Score and gap-to-best percentiles for relevant, same-document and unrelated chunks."""
+    groups: dict[str, dict[str, list]] = {}
+    for r in results:
+        scores = [c["score"] for c in r.retrieved]
+        if not scores or any(s is None for s in scores) or not r.section_labelled:
+            continue
+        top = max(scores)
+        for c in r.retrieved:
+            kind = {2: "relevant", 1: "same_document", 0: "unrelated"}[c["grade"]]
+            g = groups.setdefault(kind, {"score": [], "gap": []})
+            g["score"].append(c["score"])
+            g["gap"].append(top - c["score"])
+
+    def pct(values, p):
+        values = sorted(values)
+        return round(values[min(len(values) - 1, int(p / 100 * len(values)))], 2)
+
+    return {kind: {"n": len(g["score"]),
+                   "score_p5_p50_p95": [pct(g["score"], p) for p in (5, 50, 95)],
+                   "gap_p5_p50_p95": [pct(g["gap"], p) for p in (5, 50, 95)]}
+            for kind, g in groups.items()} or None
 
 def main():
     parser = argparse.ArgumentParser(description="Retrieval metrics without LLM calls")
@@ -202,6 +254,8 @@ def main():
     for r, m in zip(results, per_q):
         by_cat.setdefault(r.category, []).append(m)
     report["by_category"] = {c: aggregate(ms) for c, ms in sorted(by_cat.items())}
+    report["score_guide"] = score_guide(results)
+    report["floor_simulation"] = floor_simulation(results)
 
     # Misses: labelled questions with nothing relevant in the top K_MAX
     report["misses"] = [
@@ -224,6 +278,17 @@ def main():
     for cat, m in report["by_category"].items():
         print(f"  {cat:<18} n={m.get('n_doc_hit@8', 0):<4} hit@5={m.get('hit@5')}  "
               f"recall@8={m.get('recall@8')}  mrr={m.get('mrr')}")
+    if report["score_guide"]:
+          print(f"\nRerank scores by chunk grade ({configs[-1]}): score and gap to best, p5 / p50 / p95")
+          for kind, g in report["score_guide"].items():
+              print(f"  {kind:<14} n={g['n']:<5} score {g['score_p5_p50_p95']}  gap {g['gap_p5_p50_p95']}")
+    if report["floor_simulation"]:
+          print(f"\nScore floor simulation ({configs[-1]}, replayed from this run):")
+          cols = ("returned", "noise", "set_precision", "recall@8", "hit@1", "mrr", "ndcg@8",
+                  "context_chars")
+          print(f"  {'rule':<11}" + "".join(f"{c:>14}" for c in cols))
+          for name, row in report["floor_simulation"].items():
+              print(f"  {name:<11}" + "".join(f"{row[c] if row[c] is not None else '-':>14}" for c in cols))
     if report["misses"]:
         print(f"\nMisses at {K_MAX} ({configs[-1]}, first {len(report['misses'])}):")
         for miss in report["misses"][:5]:

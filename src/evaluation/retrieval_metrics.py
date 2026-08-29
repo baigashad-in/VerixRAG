@@ -162,7 +162,9 @@ def _dcg(grades: list[int]) -> float:
 
 
 def question_metrics(r: QuestionResult, ks: tuple[int, ...]) -> dict:
-    m: dict = {}
+    m: dict = {"returned": len(r.grades), "noise": sum(g == 0 for g in r.grades)}
+    if r.section_labelled and r.grades:
+        m["set_precision"] = sum(g == 2 for g in r.grades) / len(r.grades)
     for k in ks:
         top = r.grades[:k]
         m[f"doc_hit@{k}"] = float(any(g >= 1 for g in top))
