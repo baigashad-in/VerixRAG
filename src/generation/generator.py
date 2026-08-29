@@ -347,6 +347,7 @@ class RAGGenerator:
 
         answer = (response.choices[0].message.content or "").translate(_TYPOGRAPHY).strip()
         answer = re.sub(r"\[(\d+)\]", r"[Source \1]", answer)
+        answer = re.sub(r"(?<=[^\s(\[\u3010])(?=\[Sources?\s*\d)", " ", answer)   # "item[Source 1]"
 
         # Post-process: strip uncited sentences
         with span("generation.enforce_citations"):
