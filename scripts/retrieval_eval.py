@@ -23,7 +23,7 @@ import argparse
 import dataclasses
 import json
 import os
-import statistic
+import statistics
 import sys
 import time
 from datetime import datetime
