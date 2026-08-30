@@ -45,8 +45,8 @@ TEST_DEFAULTS = {
     "TRACE_BUFFER_SIZE": "500", 
     "TRACE_TRACEMALLOC": "false",
     "TRACE_LOG_PATH": "",                     # never write trace files from tests
-    "CLASSIFIER_TIMEOUT": "5", 
-    "CLASSIFIER_RETRIES": "1",
+    "CLASSIFIER_TIMEOUT": "2", 
+    "CLASSIFIER_RETRIES": "0",
     "KEYWORD_SCOPE_ENABLED": "true", 
     "KEYWORD_SCOPE_BODY_TERMS": "10",
     "KEYWORD_SCOPE_MIN_MATCHES": "2",
