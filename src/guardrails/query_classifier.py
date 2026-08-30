@@ -113,9 +113,9 @@ class LLMClassifier:
         # Bound the time a slow or failing provider can add to a request.
         # Without these, a Gemini 503 took 15-70 s (or crashed the request).
         self.timeout = timeout if timeout is not None else float(
-            os.getenv("CLASSIFIER_TIMEOUT", "5"))
+            os.getenv("CLASSIFIER_TIMEOUT", "2"))
         self.num_retries = num_retries if num_retries is not None else int(
-            os.getenv("CLASSIFIER_RETRIES", "1"))
+            os.getenv("CLASSIFIER_RETRIES", "0"))
         self.scope_description = scope_description or (
             "A knowledge base containing internal company documents. "
             "A query is in-scope if it relates to any topic that an organization "
@@ -176,7 +176,6 @@ class LLMClassifier:
                 Query: {query}
                 Return ONLY JSON: {{"in_scope": true/false, "reason": "brief explanation"}}"""
                         }],
-                            temperature = 0.0, 
                             api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"),
                             custom_llm_provider = "gemini",
                             timeout = self.timeout,

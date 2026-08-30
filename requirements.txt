@@ -14,6 +14,7 @@ PyStemmer>=2.2.0
 
 # LLM
 litellm>=1.105.0
+tenacity>=8.2.0           # litellm needs it for num_retries > 0
 
 # Utilities
 numpy>=2.0.0
