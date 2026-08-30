@@ -64,6 +64,19 @@ def show_trace(t: dict):
         print(f"  #{r['rank']} {r['source']:<24} {r.get('domain', ''):<10} id {r['chunk_id']:<5} "
               f"score {r.get('rerank_score')}{adjusted}")
 
+def classifier_fallbacks(traces: list[dict]) -> dict:
+    """Count LLM scope checks and the ones that failed open, by error type."""
+    llm_calls, reasons = 0, Counter()
+    for t in traces:
+        for s in t.get("spans", []):
+            if s.get("name") != "guardrails.classify":
+                continue
+            attrs = s.get("attrs", {})
+            if attrs.get("stage") == "llm":
+                llm_calls += 1
+                if attrs.get("fallback"):
+                    reasons[str(attrs["fallback"]).split(":", 1)[0]] += 1
+    return {"llm_calls": llm_calls, "failed": sum(reasons.values()), "reasons": reasons}
 
 def report(traces: list[dict], slowest: int):
     chats = [t for t in traces if t.get("kind") == "chat"] or traces
@@ -114,8 +127,14 @@ def report(traces: list[dict], slowest: int):
         print(f"Tokens per answered request: mean {sum(tokens) // len(tokens)}, "
               f"total {sum(tokens)}")
 
-        limited = [t["attrs"]["llm_rate_limited"] for t in chats
-               if t.get("attrs", {}).get("llm_rate_limited")]
+    fallbacks = classifier_fallbacks(chats)
+    if fallbacks["llm_calls"]:
+        reasons = ", ".join(f"{k}: {v}" for k, v in fallbacks["reasons"].most_common())
+        print(f"Classifier: {fallbacks['llm_calls']} of {len(chats)} requests asked the LLM; "
+              f"{fallbacks['failed']} fell back to in-scope" + (f" ({reasons})" if reasons else ""))
+        
+    limited = [t["attrs"]["llm_rate_limited"] for t in chats
+            if t.get("attrs", {}).get("llm_rate_limited")]
     if limited:
         print(f"LLM rate limits: {len(limited)} requests hit one ({sum(limited)} refused calls)")
         
