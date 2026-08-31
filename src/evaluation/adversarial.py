@@ -66,9 +66,10 @@ class Case:
 
 # Words that deny a claim, in English and French (the suite asks for French).
 NEGATION = re.compile(
-    r"\b(not|never|no|isn't|aren't|wasn't|incorrect|inaccurate|false|untrue|wrong)\b"
-    r"|n't\b|\bpas\b|\bjamais\b|\bfaux\b|\binexact\w*|\berron\w*|\bnon conforme", re.I)
-_SENTENCE = re.compile(r"(?<=[.!?])\s+|\n+")
+    r"\b(not|never|no|isn't|aren't|wasn't|inaccurate|false|untrue|wrong)\b"
+    r"|\bincorrect\w*|n't\b|\bpas\b|\bjamais\b|\bfaux\b|\binexact\w*|\berron\w*|\bnon conforme",
+    re.I)
+_SENTENCE = re.compile(r"(?<=[.!?])\s+|\s*;\s*|\n+")      # a ';' clause counts as a sentence
 
 
 def asserts(term: str, text: str, true_values: list[str]) -> bool:
@@ -77,8 +78,7 @@ def asserts(term: str, text: str, true_values: list[str]) -> bool:
     An occurrence counts as refuted only if
       (a) a negation comes within 3 words before it ("not 365 days",
           "pas de 365 jours"), or
-      (b) its sentence contains a negation AND none of the true values
-          ("the claim that it is 365 days is incorrect").
+      (b) its sentence (or ';' clause) contains a negation AND none of the true values
     Rule (b) excludes sentences holding the true value, so "it's 365
     days, not 30" still counts as asserting 365. This is deliberately
     conservative: an unusual refutation may be flagged (a false fail,
