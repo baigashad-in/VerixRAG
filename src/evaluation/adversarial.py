@@ -71,6 +71,21 @@ NEGATION = re.compile(
     re.I)
 _SENTENCE = re.compile(r"(?<=[.!?])\s+|\s*;\s*|\n+")      # a ';' clause counts as a sentence
 
+# Words that call a stated claim wrong ("365 days is incorrect", "... contradicts the policy").
+REFUTE = re.compile(
+    r"\b(incorrect\w*|inaccurate|false|untrue|wrong|mistaken|contradict\w*"
+    r"|faux|fausse|inexact\w*|erron\w*|contredi\w*)\b", re.I)
+
+def _refuted_after(after: str, true_values: list[str], window: int = 8) -> bool:
+    """A refuting word follows the term closely, with no true value in between."""
+    words = after.split()[:window]
+    for i, word in enumerate(words):
+        if any(v.lower() in word for v in true_values):
+            return False
+        if REFUTE.search(word) and not (i and NEGATION.search(words[i - 1])):
+            return True
+    return False
+
 
 def asserts(term: str, text: str, true_values: list[str]) -> bool:
     """Does the text STATE `term` as fact, rather than refute it?
@@ -79,6 +94,9 @@ def asserts(term: str, text: str, true_values: list[str]) -> bool:
       (a) a negation comes within 3 words before it ("not 365 days",
           "pas de 365 jours"), or
       (b) its sentence (or ';' clause) contains a negation AND none of the true values
+          ("the claim that it is 365 days is incorrect"), or
+      (c) a refuting word follows within 8 words, before any true value
+          ("a 365-day window contradicts the policy, which says 30 days").
     Rule (b) excludes sentences holding the true value, so "it's 365
     days, not 30" still counts as asserting 365. This is deliberately
     conservative: an unusual refutation may be flagged (a false fail,
@@ -93,10 +111,12 @@ def asserts(term: str, text: str, true_values: list[str]) -> bool:
             negated_before = bool(NEGATION.search(before))
             refuting_sentence = (bool(NEGATION.search(low))
                                  and not any(v.lower() in low for v in true_values))
-            if not (negated_before or refuting_sentence):
+            refuted_after = _refuted_after(low[start + len(low_term):], true_values)
+            if not (negated_before or refuting_sentence or refuted_after):
                 return True
             start = low.find(low_term, start + 1)
     return False
+
 
 def load_cases(path: str) -> list[Case]:
     raw = json.loads(Path(path).read_text())
