@@ -194,9 +194,11 @@ class QueryClassifierPipeline:
     """
 
     def __init__(self, keyword_classifier: KeywordClassifier = None,
-                 llm_classifier: LLMClassifier = None):
+                 llm_classifier: LLMClassifier = None, llm_enabled: bool | None = None):
         self.keyword = keyword_classifier or KeywordClassifier()
         self.llm = llm_classifier or LLMClassifier()
+        self.llm_enabled = (get_settings().scope_llm_enabled
+                            if llm_enabled is None else llm_enabled)
 
     def classify(self, query: str) -> dict:
         # Stage 1: fast keyword check
@@ -205,6 +207,12 @@ class QueryClassifierPipeline:
         if result["confidence"] == "high":
             result["stage"] = "keyword"
             return result
+
+        # LLM stage off (SCOPE_LLM_ENABLED=false): same outcome as a failed-open call
+        if not self.llm_enabled:
+            return {"in_scope": True, "confidence": "low",
+                    "reason": "LLM scope check disabled - defaulting to in-scope",
+                    "stage": "llm_disabled"}
         
         # Stage 2: LLM fallback for uncertain queries
         result = self.llm.classify(query)

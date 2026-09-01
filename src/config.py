@@ -61,6 +61,7 @@ class Settings:
     keyword_scope_enabled: bool        # seed in-scope terms from the documents
     keyword_scope_body_terms: int      # distinctive body words per document
     keyword_scope_min_matches: int     # terms a query must match to skip the LLM
+    scope_llm_enabled: bool            # ask the LLM when the keyword stage is unsure
 
     # -- Deduplication --
     dedup_enabled: bool
@@ -101,6 +102,7 @@ def get_settings() -> Settings:
             keyword_scope_enabled=_bool("KEYWORD_SCOPE_ENABLED", True),
             keyword_scope_body_terms=_int("KEYWORD_SCOPE_BODY_TERMS", 10),
             keyword_scope_min_matches=_int("KEYWORD_SCOPE_MIN_MATCHES", 2),
+            scope_llm_enabled=_bool("SCOPE_LLM_ENABLED", True),
             dedup_enabled=_bool("DEDUP_ENABLED", True),
             dedup_cosine=_float("DEDUP_COSINE", 0.95),
             dedup_jaccard=_float("DEDUP_JACCARD", 0.85),
