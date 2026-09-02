@@ -1,28 +1,20 @@
-"""
-Retrieval metrics (Hit@k, Recall@k, Precision@k, MRR, NDCG) per configuration.
+"""Compare retrieval configurations on an eval set, without LLM calls.
 
-No LLM calls and no quota: only embedding, search and re-ranking run.
-Each configuration adds one component, so the table shows what each
-one contributes:
+Configurations: dense, bm25, hybrid, rerank, full (production), and the query
+rewriting strategies multi, hyde, expand (production plus one LLM call per question).
+Metrics: Hit@k, Recall@k, Precision@k, MRR, NDCG@k.
 
-    dense         pgvector cosine search only
-    bm25          keyword search only
-    hybrid        dense + BM25 fused with RRF
-    rerank        hybrid -> cross-encoder re-ranking
-    full          rerank -> domain scoping   (what production runs)
-
-Usage (inside the container):
+Usage:
     python -m scripts.retrieval_eval --dataset experiments/eval_dataset.json
-    python -m scripts.retrieval_eval --dataset experiments/eval_dataset.json --configs hybrid,full
-    python -m scripts.retrieval_eval --dataset ... --label before-floor    # name the report
-
-Relevance is judged by (document, section) -> src/evaluation/retrieval_metrics.py.
+    python -m scripts.retrieval_eval --dataset ... --configs hybrid,full --label NAME
+    python -m scripts.retrieval_eval --dataset ... --configs full,multi,hyde,expand --limit 50 --seed 7 --delay 4
 """
 
 import argparse
 import dataclasses
 import json
 import os
+import random
 import statistics
 import sys
 import time
@@ -38,10 +30,12 @@ load_dotenv()
 from src.evaluation.retrieval_metrics import (
     QuestionResult, aggregate, chunk_sections, grade, parse_labels, question_metrics,
 )
-from src.observability.tracing import latency_stats
 from src.retrieval.confidence import chunk_score, floor_mask
+from src.observability.tracing import latency_stats
 
-ALL_CONFIGS = ("dense", "bm25", "hybrid", "rerank", "full")
+DEFAULT_CONFIGS = ("dense", "bm25", "hybrid", "rerank", "full")
+STRATEGY_CONFIGS = ("multi", "hyde", "expand")          # make LLM calls
+ALL_CONFIGS = DEFAULT_CONFIGS + STRATEGY_CONFIGS
 KS = (1, 3, 5, 8)
 K_MAX = max(KS)
 OUT_OF_SCOPE = {"out_of_scope"}
@@ -51,7 +45,7 @@ FLOOR_RULES = [("off", None, None)] + [(f"margin {m:g}", None, m) for m in (8, 6
               [(f"floor {f:g}", f, None) for f in (-8, -6, -4, -2, 0)]
 
 
-def load_questions(path: str, limit: int | None = None) -> list[dict]:
+def load_questions(path: str, limit: int | None = None, seed: int | None = None) -> list[dict]:
     raw = json.loads(Path(path).read_text())
     items = raw["questions"] if isinstance(raw, dict) and "questions" in raw else raw
     out = []
@@ -66,11 +60,13 @@ def load_questions(path: str, limit: int | None = None) -> list[dict]:
             "source_file": q.get("source_file") or meta.get("source_file"),
             "sections": q.get("sections") or meta.get("sections") or [],
         })
+    if seed is not None:
+        random.Random(seed).shuffle(out)         # a mixed sample when --limit is used
     return out[:limit] if limit else out
 
 
 def corpus_index(store) -> list[tuple[str, list[str]]]:
-    """(source, sections covered) of every stored chunk, for ideal rankings."""
+    """Return (source, sections covered) for every stored chunk."""
     with store.conn.cursor() as cur:
         cur.execute("""SELECT COALESCE(metadata->>'source', metadata->>'filename'),
                               COALESCE(metadata->>'section', ''), content FROM chunks;""")
@@ -87,8 +83,8 @@ def _chunk_id(result):
     return result.get("id") if isinstance(result, dict) else getattr(result, "chunk_id", None)
 
 
-def make_retrievers(engine, store, bm25) -> dict:
-    """query -> ranked results, one function per configuration."""
+def make_retrievers(engine, store, bm25, transformer=None) -> dict:
+    """Return one retrieval function per configuration."""
     embed = engine.embedder.embed_text
     scorer = engine.domain_scorer
 
@@ -105,7 +101,18 @@ def make_retrievers(engine, store, bm25) -> dict:
         "hybrid": lambda q: engine.hybrid.search(q, embed(q), top_k=K_MAX),
         "rerank": rerank,
         "full": lambda q: engine._retrieve_uncached(q, K_MAX, True, None),
+        **strategy_retrievers(engine, transformer),
     }
+
+
+def strategy_retrievers(engine, transformer) -> dict:
+    """Production retrieval with each query rewriting strategy."""
+    if transformer is None:
+        return {}
+    from src.query.enhanced_retrieval import EnhancedRetriever, QueryStrategy
+    enhanced = EnhancedRetriever(engine, transformer, engine.embedder)
+    return {name: (lambda q, s=QueryStrategy(name): enhanced.retrieve(q, top_k=K_MAX, strategy=s))
+            for name in STRATEGY_CONFIGS}
 
 
 def _content(result) -> str:
@@ -113,9 +120,12 @@ def _content(result) -> str:
             else getattr(result, "content", "")) or ""
 
 
-def evaluate(questions: list[dict], retrieve, corpus: list[tuple[str, list[str]]]) -> tuple[list, list]:
+def evaluate(questions: list[dict], retrieve, corpus: list[tuple[str, list[str]]],
+             delay: float = 0.0) -> tuple[list, list]:
     results, timings = [], []
-    for q in questions:
+    for i, q in enumerate(questions):
+        if delay and i:
+            time.sleep(delay)                    # rate limits of the rewrite model; not timed
         labels = parse_labels(q["sections"], q["source_file"])
         sources = {lab.source for lab in labels if lab.source}
         if q["source_file"] and q["source_file"] != "cross_document":
@@ -198,10 +208,15 @@ def score_guide(results: list) -> dict | None:
                    "gap_p5_p50_p95": [pct(g["gap"], p) for p in (5, 50, 95)]}
             for kind, g in groups.items()} or None
 
+
 def main():
     parser = argparse.ArgumentParser(description="Retrieval metrics without LLM calls")
     parser.add_argument("--dataset", required=True)
-    parser.add_argument("--configs", default=",".join(ALL_CONFIGS))
+    parser.add_argument("--configs", default=",".join(DEFAULT_CONFIGS),
+                        help=f"comma-separated, from {','.join(ALL_CONFIGS)}")
+    parser.add_argument("--seed", type=int, help="shuffle questions before --limit")
+    parser.add_argument("--delay", type=float, default=0.0,
+                        help="seconds between questions for rewriting strategies (rate limits)")
     parser.add_argument("--limit", type=int)
     parser.add_argument("--label", default="default")
     parser.add_argument("--output-dir", default="experiments")
@@ -215,15 +230,20 @@ def main():
         parser.error(f"unknown configs {sorted(unknown)}; choose from {ALL_CONFIGS}")
 
     from src.factory import build_retrieval_stack
-    stack = build_retrieval_stack(with_reranker=bool({"rerank", "full"} & set(configs)))
+    stack = build_retrieval_stack(
+        with_reranker=bool({"rerank", "full", *STRATEGY_CONFIGS} & set(configs)))
     engine, store, bm25 = stack["engine"], stack["store"], stack["bm25"]
     engine.cache = None                      # measure retrieval, not cache hits
     if args.sparse_weight is not None:
         engine.hybrid.sparse_weight = args.sparse_weight
 
-    questions = load_questions(args.dataset, args.limit)
+    questions = load_questions(args.dataset, args.limit, args.seed)
     corpus = corpus_index(store)
-    retrievers = make_retrievers(engine, store, bm25)
+    transformer = None
+    if set(STRATEGY_CONFIGS) & set(configs):
+        from src.query.query_transformer import QueryTransformer
+        transformer = QueryTransformer()
+    retrievers = make_retrievers(engine, store, bm25, transformer)
     print(f"{len(questions)} in-scope questions, {len(corpus)} chunks, configs: {configs}, "
           f"sparse weight {engine.hybrid.sparse_weight}")
 
@@ -233,9 +253,22 @@ def main():
     full_results = None
     for name in configs:
         print(f"  running {name}...", flush=True)
-        results, timings = evaluate(questions, retrievers[name], corpus)
+        before = dict(transformer.stats) if transformer else {}
+        results, timings = evaluate(questions, retrievers[name], corpus,
+                                    args.delay if name in STRATEGY_CONFIGS else 0.0)
         per_q = [question_metrics(r, KS) for r in results]
-        report["configs"][name] = {"metrics": aggregate(per_q), "latency_ms": latency_stats(timings)}
+        by_cat: dict[str, list] = {}
+        for r, m in zip(results, per_q):
+            by_cat.setdefault(r.category, []).append(m)
+        report["configs"][name] = {
+            "metrics": aggregate(per_q), "latency_ms": latency_stats(timings),
+            "by_category": {c: {k: aggregate(ms).get(k) for k in ("hit@1", "recall@8", "mrr")}
+                            for c, ms in sorted(by_cat.items())}}
+        if name in STRATEGY_CONFIGS:
+            used = {k: transformer.stats[k] - before.get(k, 0) for k in ("calls", "errors", "tokens", "ms")}
+            used["mean_call_ms"] = round(used["ms"] / used["calls"]) if used["calls"] else None
+            used["tokens_per_question"] = round(used["tokens"] / len(questions)) if questions else None
+            report["configs"][name]["rewrite"] = used
         if name == configs[-1]:
             full_results = (results, per_q)
 
@@ -254,6 +287,7 @@ def main():
     for r, m in zip(results, per_q):
         by_cat.setdefault(r.category, []).append(m)
     report["by_category"] = {c: aggregate(ms) for c, ms in sorted(by_cat.items())}
+
     report["score_guide"] = score_guide(results)
     report["floor_simulation"] = floor_simulation(results)
 
@@ -273,22 +307,37 @@ def main():
         m = data["metrics"]
         cells = "".join(f"{m.get(k) if m.get(k) is not None else '-':>12}" for k in HEADLINE)
         print(f"{name:<8}{cells}{data['latency_ms'].get('p50', '-'):>9}")
+    rewrites = {n: d["rewrite"] for n, d in report["configs"].items() if "rewrite" in d}
+    if rewrites:
+        print(f"\nRewrite model {transformer.model}: calls, failures (fell back to the plain query), "
+              "tokens per question, mean call ms")
+        for name, u in rewrites.items():
+            print(f"  {name:<8} calls {u['calls']}  failures {u['errors']}  "
+                  f"tokens/q {u['tokens_per_question']}  call {u['mean_call_ms']} ms")
+    if len(report["configs"]) > 1:
+        cats = sorted({c for d in report["configs"].values() for c in d["by_category"]})
+        print("\nMRR by category:")
+        print(f"  {'category':<18}" + "".join(f"{n:>9}" for n in report["configs"]))
+        for c in cats:
+            print(f"  {c:<18}" + "".join(
+                f"{report['configs'][n]['by_category'].get(c, {}).get('mrr', '-'):>9}"
+                for n in report["configs"]))
 
     print(f"\nBy category ({configs[-1]}):")
     for cat, m in report["by_category"].items():
         print(f"  {cat:<18} n={m.get('n_doc_hit@8', 0):<4} hit@5={m.get('hit@5')}  "
               f"recall@8={m.get('recall@8')}  mrr={m.get('mrr')}")
     if report["score_guide"]:
-          print(f"\nRerank scores by chunk grade ({configs[-1]}): score and gap to best, p5 / p50 / p95")
-          for kind, g in report["score_guide"].items():
-              print(f"  {kind:<14} n={g['n']:<5} score {g['score_p5_p50_p95']}  gap {g['gap_p5_p50_p95']}")
+        print(f"\nRerank scores by chunk grade ({configs[-1]}): score and gap to best, p5 / p50 / p95")
+        for kind, g in report["score_guide"].items():
+            print(f"  {kind:<14} n={g['n']:<5} score {g['score_p5_p50_p95']}  gap {g['gap_p5_p50_p95']}")
     if report["floor_simulation"]:
-          print(f"\nScore floor simulation ({configs[-1]}, replayed from this run):")
-          cols = ("returned", "noise", "set_precision", "recall@8", "hit@1", "mrr", "ndcg@8",
-                  "context_chars")
-          print(f"  {'rule':<11}" + "".join(f"{c:>14}" for c in cols))
-          for name, row in report["floor_simulation"].items():
-              print(f"  {name:<11}" + "".join(f"{row[c] if row[c] is not None else '-':>14}" for c in cols))
+        print(f"\nScore floor simulation ({configs[-1]}, replayed from this run):")
+        cols = ("returned", "noise", "set_precision", "recall@8", "hit@1", "mrr", "ndcg@8",
+                "context_chars")
+        print(f"  {'rule':<11}" + "".join(f"{c:>14}" for c in cols))
+        for name, row in report["floor_simulation"].items():
+            print(f"  {name:<11}" + "".join(f"{row[c] if row[c] is not None else '-':>14}" for c in cols))
     if report["misses"]:
         print(f"\nMisses at {K_MAX} ({configs[-1]}, first {len(report['misses'])}):")
         for miss in report["misses"][:5]:
