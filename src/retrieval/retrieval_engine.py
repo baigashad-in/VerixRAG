@@ -118,52 +118,64 @@ class RetrievalEngine:
         # 2. Hybrid search - fetch more candidates than needed
         # so the re-ranker has good material to work with
         fetch_k = self._candidate_count(top_k, use_reranker)
+        hybrid_results = self.search_candidates(query, query_embedding, fetch_k, metadata_filter)
 
+        # 3. Re-rank, scope and floor if enabled and available
+        if use_reranker and self.reranker and hybrid_results:
+            return self.rerank(query, hybrid_results, top_k, query_embedding)
+
+        # Without re-ranking, return hybrid results directly
+        return hybrid_results[:top_k]
+
+    def search_candidates(self, query: str, query_embedding, fetch_k: int,
+                          metadata_filter: dict = None) -> list:
+        """Hybrid search for rerank candidates (dense uses the embedding, BM25 the text)."""
         with span("retrieval.hybrid_search", fetch_k=fetch_k) as attrs:
-            hybrid_results = self.hybrid.search(
+            results = self.hybrid.search(
                 query = query,
                 query_embedding = query_embedding,
                 top_k = fetch_k,
                 metadata_filter = metadata_filter,
             )
-            attrs["candidates"] = len(hybrid_results)
+            attrs["candidates"] = len(results)
+        return results
 
-        # 3. Re-rank if enabled and available
-        if use_reranker and self.reranker and hybrid_results:
-            # Score ALL candidates, so domain scoping can promote an
-            # in-domain chunk from below the cut-off.
-            with span("retrieval.rerank", candidates=len(hybrid_results)) as attrs:
-                reranked = self.reranker.rerank(
-                    query = query,
-                    results = hybrid_results,
-                    top_k = len(hybrid_results),
-                )
-                attrs["top_score"] = (round(reranked[0].rerank_score, 3)
-                                      if reranked else None)
+    def rerank(self, query: str, candidates: list, top_k: int, query_embedding=None) -> list:
+        """Score candidates against the user's question, then apply scoping and the floor."""
+        if not (self.reranker and candidates):
+            return candidates[:top_k]
+        # Score ALL candidates, so domain scoping can promote an
+        # in-domain chunk from below the cut-off.
+        with span("retrieval.rerank", candidates=len(candidates)) as attrs:
+            reranked = self.reranker.rerank(
+                query = query,
+                results = candidates,
+                top_k = len(candidates),
+            )
+            attrs["top_score"] = (round(reranked[0].rerank_score, 3)
+                                  if reranked else None)
 
-            # 4. Source scoping: down-rank chunks from other domains
-            if self.domain_scorer is not None:
-                with span("retrieval.scoping") as attrs:
-                    detection = self.domain_scorer.detect(query, query_embedding)
-                    reranked = self.domain_scorer.apply(reranked, detection)
-                    attrs.update({k: v for k, v in detection.items() if k != "scores"})
-                    attrs["penalized_in_top_k"] = sum(
-                        1 for r in reranked[:top_k] if r.domain_penalty)
-                trace = current_trace()
-                if trace is not None:
-                    trace.set(scoping=detection)
-            top = reranked[:top_k]
-            if self.chunk_floor is not None or self.chunk_margin:
-                with span("retrieval.score_floor", floor=self.chunk_floor,
-                          margin=self.chunk_margin) as attrs:
-                    kept = apply_score_floor(top, self.chunk_floor, self.chunk_margin)
-                    attrs["dropped"] = len(top) - len(kept)
-                return kept
-            return top
-        
-        # Without re-ranking, return hybrid results directly
-        return hybrid_results[:top_k]
-
+        # Source scoping: down-rank chunks from other domains
+        if self.domain_scorer is not None:
+            if query_embedding is None:
+                query_embedding = self.embedder.embed_text(query)
+            with span("retrieval.scoping") as attrs:
+                detection = self.domain_scorer.detect(query, query_embedding)
+                reranked = self.domain_scorer.apply(reranked, detection)
+                attrs.update({k: v for k, v in detection.items() if k != "scores"})
+                attrs["penalized_in_top_k"] = sum(
+                    1 for r in reranked[:top_k] if r.domain_penalty)
+            trace = current_trace()
+            if trace is not None:
+                trace.set(scoping=detection)
+        top = reranked[:top_k]
+        if self.chunk_floor is not None or self.chunk_margin:
+            with span("retrieval.score_floor", floor=self.chunk_floor,
+                      margin=self.chunk_margin) as attrs:
+                kept = apply_score_floor(top, self.chunk_floor, self.chunk_margin)
+                attrs["dropped"] = len(top) - len(kept)
+            return kept
+        return top
     
     def refresh_domains(self):
         """Reload per-domain centroids from the store (startup / after ingest)."""
