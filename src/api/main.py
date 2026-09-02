@@ -44,6 +44,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 from src.api.auth import verify_api_key
 from src.api.models import ChatRequest, IngestRequest
+from src.query.enhanced_retrieval import QueryStrategy
 
 from src.observability.tracing import (
     get_trace_store, measure, peak_rss_mb, rss_mb, start_trace, span,
@@ -323,7 +324,8 @@ def chat(request: ChatRequest, api_key: str = Security(verify_api_key)):
         else:
             for attempt in range(3):
                 try:
-                    result = pipeline.answer(query = request.query, top_k = request.top_k)
+                    result = pipeline.answer(query = request.query, top_k = request.top_k,
+                                             query_strategy = QueryStrategy(request.strategy))
                     break
                 except Exception as e:
                     if "rate" in str(e).lower() or "429" in str(e) or "quota" in str(e).lower():
