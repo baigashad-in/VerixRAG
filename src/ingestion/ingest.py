@@ -23,8 +23,9 @@ from src.storage.vector_store import VectorStore
 from src.ingestion.chunker_factory import ChunkerFactory
 from src.ingestion.dedup import Deduplicator
 from src.ingestion.metadata import (
-    ChunkLocator, content_hash, document_title, ingest_signature, parse_front_matter, utc_now,
-)
+      ChunkLocator, chunk_context, content_hash, document_title, ingest_signature,
+      parse_front_matter, utc_now,
+  )
 from src.observability.tracing import measure, peak_rss_mb, rss_mb
 from src.retrieval.scoping import load_domain_config
 
@@ -71,6 +72,11 @@ class IngestionPipeline:
                       if settings.dedup_enabled else None),
             "metadata_version": 2,
         }
+        # Contextual chunks: embed and BM25-index "section path + content".
+        # Only added when on, so existing signatures stay valid when off.
+        self.contextual = settings.contextual_chunks
+        if self.contextual:
+            self.config["contextual"] = 1
         self.last_perf: dict = {}
         self.last_dedup: list[dict] = []
         print(f"Pipeline configured: {self.config}")
@@ -111,6 +117,8 @@ class IngestionPipeline:
             position, section = locator.locate(chunk.content)
             chunk.metadata.update(meta)
             chunk.metadata["section"] = section
+            if self.contextual:
+                chunk.metadata["context"] = chunk_context(chunk.metadata)
             if position is not None:
                 chunk.metadata["char_start"] = position
             chunk.metadata.pop("char_count", None)   # document-level, not chunk-level

@@ -64,6 +64,7 @@ class Settings:
     scope_llm_enabled: bool            # ask the LLM when the keyword stage is unsure
 
     # -- Deduplication --
+    contextual_chunks: bool        # prefix section path to embedded and BM25 text
     dedup_enabled: bool
     dedup_cosine: float            # near-duplicate if cosine >= this ...
     dedup_jaccard: float           # ... AND token Jaccard >= this
@@ -104,6 +105,7 @@ def get_settings() -> Settings:
             keyword_scope_min_matches=_int("KEYWORD_SCOPE_MIN_MATCHES", 2),
             scope_llm_enabled=_bool("SCOPE_LLM_ENABLED", True),
             dedup_enabled=_bool("DEDUP_ENABLED", True),
+            contextual_chunks=_bool("CONTEXTUAL_CHUNKS", False),
             dedup_cosine=_float("DEDUP_COSINE", 0.95),
             dedup_jaccard=_float("DEDUP_JACCARD", 0.85),
             cache_enabled=_bool("CACHE_ENABLED", True),

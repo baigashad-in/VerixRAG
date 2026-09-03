@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass
 
 import numpy as np
+from src.ingestion.metadata import index_text
 
 try:
     import Stemmer
@@ -75,7 +76,7 @@ class BM25Retriever:
             self._index, self.documents = None, []
             return
         builder = _Builder(self)
-        builder.add([c["content"] for c in chunks])
+        builder.add([index_text(c["content"], c.get("metadata")) for c in chunks])
         ids = np.array([c.get("id", i) for i, c in enumerate(chunks)], dtype=np.int64)
         self._index = builder.build(ids, documents=list(chunks), store=None)
         self.documents = self._index.documents
@@ -85,10 +86,10 @@ class BM25Retriever:
         """Stream every chunk from the store; hits are fetched from the store at query time."""
         builder, ids = _Builder(self), []
         with vector_store.conn.cursor(name="bm25_load") as cur:
-            cur.execute("SELECT id, content FROM chunks ORDER BY id")
+            cur.execute("SELECT id, content, metadata->>'context' FROM chunks ORDER BY id")
             while rows := cur.fetchmany(batch_size):
-                ids.extend(r[0] for r in rows)
-                builder.add([r[1] for r in rows])
+                  ids.extend(r[0] for r in rows)
+                  builder.add([index_text(r[1], {"context": r[2]}) for r in rows])
         vector_store.conn.commit()
         if not ids:
             self._index, self.documents = None, []

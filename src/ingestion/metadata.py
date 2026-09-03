@@ -56,6 +56,15 @@ def parse_front_matter(text: str) -> tuple[dict, str]:
                 meta[key] = value.strip().strip("'\"")
     return meta, text[match.end():]
 
+def chunk_context(meta: dict) -> str:
+    """Where a chunk sits: its section path, or the document title."""
+    return meta.get("section") or meta.get("title") or ""
+
+
+def index_text(content: str, meta: dict | None) -> str:
+    """Text to embed and index for BM25: the stored context line, then the content."""
+    context = (meta or {}).get("context")
+    return f"{context}\n\n{content}" if context else content
 
 def document_title(text: str, fallback: str) -> str:
     for match in _HEADING_RE.finditer(text):

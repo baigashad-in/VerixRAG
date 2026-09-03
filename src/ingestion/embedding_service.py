@@ -12,6 +12,7 @@ import numpy as np
 
 from dataclasses import dataclass
 from sentence_transformers import SentenceTransformer
+from src.ingestion.metadata import index_text
 
 
 @dataclass
@@ -59,7 +60,7 @@ class EmbeddingService:
         2 minutes and 20 minutes.
         """
 
-        texts = [chunk.content for chunk in chunks]
+        texts = [index_text(chunk.content, chunk.metadata) for chunk in chunks]
 
         # batch encode - this is the performance-critical call
         vectors = self.model.encode(

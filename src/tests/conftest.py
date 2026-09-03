@@ -36,6 +36,7 @@ TEST_DEFAULTS = {
     "DOMAIN_PENALTY": "2.0", 
     "DOMAIN_MIN_MARGIN": "0.05",
     "DOMAINS_CONFIG": "config/domains.json",
+    "CONTEXTUAL_CHUNKS": "false",
     "DEDUP_ENABLED": "true", 
     "DEDUP_COSINE": "0.95", 
     "DEDUP_JACCARD": "0.85",
