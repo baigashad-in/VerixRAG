@@ -114,10 +114,12 @@ class RecursiveChunker:
                     chunks.append(current_chunk)
 
                 # If this single part is too big, recurse with
-                # finer separators
+                # finer separators; start the next chunk empty, or the
+                # chunk just saved would be repeated
                 if len(part) > self.chunk_size and remaining_seps:
                     sub_chunks = self._split_text(part, remaining_seps)
                     chunks.extend(sub_chunks)
+                    current_chunk = ""
                 else:
                     current_chunk = part
 

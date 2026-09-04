@@ -88,6 +88,18 @@ class TestRecursiveChunker:
         assert "refund" in combined.lower()
         assert "shipping" in combined.lower()
 
+    def test_long_paragraph_does_not_repeat_text(self):
+        """A paragraph over chunk_size must not re-emit or re-glue the chunk before it."""
+        short_a = "Intro paragraph about the alpha setting."
+        long_b = " ".join(f"Sentence {i} explains option {i} for admins." for i in range(30))
+        short_c = "Closing paragraph about the gamma setting."
+        doc = Document(content=f"{short_a}\n\n{long_b}\n\n{short_c}", metadata={"source": "t.md"})
+        texts = [c.content for c in RecursiveChunker(chunk_size=200).chunk(doc)]
+        assert len(texts) == len(set(texts))                         # no duplicate chunks
+        assert sum(short_a in t for t in texts) == 1                 # earlier text appears once
+        assert sum(short_c in t for t in texts) == 1
+        assert all(len(t) <= 200 for t in texts)
+
 
 class TestChunkerFactory:
     def test_create_fixed(self):

@@ -71,6 +71,7 @@ class IngestionPipeline:
             "dedup": ([settings.dedup_cosine, settings.dedup_jaccard]
                       if settings.dedup_enabled else None),
             "metadata_version": 2,
+            "chunker_version": 2,          # 2: no repeated text after long paragraphs
         }
         # Contextual chunks: embed and BM25-index "section path + content".
         # Only added when on, so existing signatures stay valid when off.
