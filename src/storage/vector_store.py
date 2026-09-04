@@ -13,8 +13,10 @@ migrations.
 import json
 import re
 import time
-import psycopg
 import threading
+from contextlib import contextmanager
+import psycopg
+from psycopg.pq import TransactionStatus
 
 class VectorStore:
     ALLOWED_KEYS = {
@@ -53,6 +55,28 @@ class VectorStore:
             with self._connections_lock:
                 self._connections.append(conn)
         return conn
+
+    @contextmanager
+    def read_cursor(self):
+        """Cursor for read-only queries that ends the transaction it opened.
+
+        psycopg opens a transaction on the first query, so without this a
+        read leaves the connection idle in transaction (holding locks that
+        block DDL) or, after an error, unusable until rolled back. A
+        transaction the caller already opened is left alone.
+        """
+        conn = self.conn
+        started = conn.info.transaction_status == TransactionStatus.IDLE
+        try:
+            with conn.cursor() as cur:
+                yield cur
+        finally:
+            if started:
+                status = conn.info.transaction_status
+                if status == TransactionStatus.INERROR:
+                    conn.rollback()
+                elif status == TransactionStatus.INTRANS:
+                    conn.commit()
     
     def _initialize_db(self):
         """Create the pgvector extension and chunks table.
@@ -166,7 +190,7 @@ class VectorStore:
         if not isinstance(top_k, int) or not (1 <= top_k <= 100):
             raise ValueError("top_k must be between 1 and 100")
 
-        with self.conn.cursor() as cur:
+        with self.read_cursor() as cur:
             # Build the query with optional metadata filter
             where_clause = ""
             params = [str(query_embedding), top_k]
@@ -207,7 +231,7 @@ class VectorStore:
             return results
     def get_stats(self) -> dict:
         """Get store statistics - useful for debugging."""
-        with self.conn.cursor() as cur:
+        with self.read_cursor() as cur:
             cur.execute("SELECT COUNT(*) FROM chunks;")
             count = cur.fetchone()[0]
 
@@ -270,7 +294,7 @@ class VectorStore:
         now = time.monotonic()
         if self._version_cache and now - self._version_cache[0] < max_age_seconds:
             return self._version_cache[1]
-        with self.conn.cursor() as cur:
+        with self.read_cursor() as cur:
             cur.execute("SELECT COUNT(*), COALESCE(MAX(id), 0) FROM chunks;")
             count, max_id = cur.fetchone()
         version = f"{count}:{max_id}"
@@ -282,7 +306,7 @@ class VectorStore:
 
     def domain_centroids(self) -> dict[str, list[float]]:
         """Mean embedding of each domain's chunks (pgvector AVG aggregate)."""
-        with self.conn.cursor() as cur:
+        with self.read_cursor() as cur:
             cur.execute("""
                 SELECT metadata->>'domain', AVG(embedding)::text
                 FROM chunks
@@ -296,7 +320,7 @@ class VectorStore:
         Used to skip re-embedding documents that haven't changed.
         Chunks ingested before signatures existed map to None.
         """
-        with self.conn.cursor() as cur:
+        with self.read_cursor() as cur:
             # Chunks stored before the registry existed: unknown signature
             cur.execute("SELECT DISTINCT metadata->>'source' FROM chunks;")
             signatures = {row[0]: None for row in cur.fetchall() if row[0]}
@@ -306,7 +330,7 @@ class VectorStore:
 
     def list_documents(self) -> list[dict]:
         """The document registry: version, domain and chunk counts per file."""
-        with self.conn.cursor() as cur:
+        with self.read_cursor() as cur:
             cur.execute("""SELECT source, doc_hash, domain, title, chunks,
                                   duplicates_dropped, ingested_at
                            FROM documents ORDER BY source;""")
@@ -322,7 +346,7 @@ class VectorStore:
         already stored from OTHER documents.
         """
         exclude = list(exclude_sources or [])
-        with self.conn.cursor() as cur:
+        with self.read_cursor() as cur:
             cur.execute("""
                 SELECT id, content, metadata->>'source',
                        1 - (embedding <=> %s::vector) AS similarity

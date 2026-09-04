@@ -126,7 +126,7 @@ class BM25Retriever:
                                  metadata=idx.documents[i].get("metadata", {}) or {},
                                  score=float(scores[i])) for i in top]
         wanted = [int(idx.chunk_ids[i]) for i in top]
-        with idx.store.conn.cursor() as cur:
+        with idx.store.read_cursor() as cur:
             cur.execute("SELECT id, content, metadata FROM chunks WHERE id = ANY(%s)", (wanted,))
             rows = {r[0]: r for r in cur.fetchall()}
         return [SparseResult(chunk_id=cid, content=rows[cid][1], metadata=rows[cid][2] or {},

@@ -67,7 +67,7 @@ def load_questions(path: str, limit: int | None = None, seed: int | None = None)
 
 def corpus_index(store) -> list[tuple[str, list[str]]]:
     """Return (source, sections covered) for every stored chunk."""
-    with store.conn.cursor() as cur:
+    with store.read_cursor() as cur:
         cur.execute("""SELECT COALESCE(metadata->>'source', metadata->>'filename'),
                               COALESCE(metadata->>'section', ''), content FROM chunks;""")
         return [(r[0], chunk_sections(r[1], r[2])) for r in cur.fetchall()]
