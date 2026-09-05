@@ -1,0 +1,23 @@
+{
+  "description": "BEIR SciFact test split (300 queries), app rerank settings. Recorded locally 2026-11-11.",
+  "tolerance": 0.005,
+  "match": {
+    "queries": 300,
+    "rerank_defaults.candidates": 16,
+    "rerank_defaults.max_length": 256,
+    "bm25_params.k1": 1.2,
+    "bm25_params.b": 0.75
+  },
+  "metrics": {
+    "dense.ndcg@10": 0.6451,
+    "dense.mrr@10": 0.6047,
+    "bm25.ndcg@10": 0.6805,
+    "bm25.mrr@10": 0.6428,
+    "hybrid.ndcg@10": 0.7129,
+    "hybrid.mrr@10": 0.6783,
+    "rerank c16 len256.ndcg@10": 0.6884,
+    "rerank c16 len256.mrr@10": 0.6553
+  },
+  "source": "experiments/beir_scifact_2026-11-11T00-51-48.json",
+  "date": "2026-11-11"
+}

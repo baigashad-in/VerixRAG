@@ -1,0 +1,18 @@
+{
+  "description": "App documents, 290-question eval set (251 section-labelled), RERANK_CHUNK_FLOOR=-8, CONTEXTUAL_CHUNKS=true, chunker v2.",
+  "tolerance": 0.01,
+  "match": {
+    "label_quality.questions": 290,
+    "label_quality.section_labelled": 251
+  },
+  "metrics": {
+    "full.hit@1": 0.9004,
+    "full.mrr": 0.9457,
+    "full.recall@8": 0.988,
+    "hybrid.mrr": 0.9297,
+    "bm25.mrr": 0.9241,
+    "dense.mrr": 0.8888
+  },
+  "source": "experiments/retrieval_eval_chunker-v2_2026-11-10T20-54-57.json",
+  "date": "2026-11-10"
+}

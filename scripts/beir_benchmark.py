@@ -24,6 +24,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import psycopg
+import numpy as np
 from psycopg import sql
 
 from src.evaluation.ir_metrics import mean, mrr_at_k, ndcg_at_k, overlap_at_k, recall_at_k
@@ -89,8 +90,20 @@ def database_url(dataset: str) -> str:
     return psycopg.conninfo.make_conninfo(base, dbname=name)
 
 
-def ingest(store, embedder, folder: Path, batch: int, maintenance_mem: str) -> dict:
-    """Bulk-load the corpus (COPY, index built afterwards). Skips if already loaded."""
+def embed_cache_path(cache_dir: str | None, folder: Path, model_name: str) -> Path | None:
+    """File for cached passage vectors of one dataset and embedding model."""
+    if not cache_dir:
+        return None
+    return Path(cache_dir) / f"{folder.name}__{model_name.replace('/', '_')}.npy"
+
+
+def ingest(store, embedder, folder: Path, batch: int, maintenance_mem: str,
+             embed_cache: str | None = None) -> dict:
+    """Bulk-load the corpus (COPY, index built afterwards). Skips if already loaded.
+
+    With embed_cache, passage vectors are read from (or saved to) a .npy file,
+    so repeated loads (e.g. in CI) skip embedding.
+    """
     with open(folder / "corpus.jsonl") as f:
         total = sum(1 for line in f if line.strip())
     with store.conn.cursor() as cur:
@@ -106,11 +119,21 @@ def ingest(store, embedder, folder: Path, batch: int, maintenance_mem: str) -> d
         cur.execute("DROP INDEX IF EXISTS chunks_metadata_idx")
     store.conn.commit()
 
+    cache = embed_cache_path(embed_cache, folder, embedder.model_name)
+    cached = np.load(cache) if cache and cache.exists() else None
+    if cached is not None and len(cached) != total:
+        cached = None                                   # corpus changed: re-embed
+    parts = []
     t0, embed_s, done = time.perf_counter(), 0.0, 0
     for block in iter_corpus(folder, batch):
         e0 = time.perf_counter()
-        vectors = embedder.model.encode([b[2] for b in block], batch_size=64,
-                                        normalize_embeddings=True, show_progress_bar=False)
+        if cached is not None:
+            vectors = cached[done:done + len(block)]
+        else:
+            vectors = embedder.model.encode([b[2] for b in block], batch_size=64,
+                                            normalize_embeddings=True, show_progress_bar=False)
+            if cache:
+                parts.append(np.asarray(vectors, dtype=np.float32))
         embed_s += time.perf_counter() - e0
         with store.conn.cursor() as cur, cur.copy(
                 "COPY chunks (content, embedding, metadata) FROM STDIN") as copy:
@@ -121,6 +144,12 @@ def ingest(store, embedder, folder: Path, batch: int, maintenance_mem: str) -> d
         done += len(block)
         print(f"  {done}/{total} passages ({done / (time.perf_counter() - t0):.0f}/s)", flush=True)
     load_s = time.perf_counter() - t0
+    cache_state = None
+    if cache:
+        cache_state = "hit" if cached is not None else "saved"
+        if cached is None:
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            np.save(cache, np.vstack(parts))
 
     i0 = time.perf_counter()
     with store.conn.cursor() as cur:
@@ -131,8 +160,11 @@ def ingest(store, embedder, folder: Path, batch: int, maintenance_mem: str) -> d
         cur.execute("CREATE INDEX chunks_metadata_idx ON chunks USING gin (metadata)")
         cur.execute("ANALYZE chunks")
     store.conn.commit()
-    return {"passages": total, "load_s": round(load_s, 1), "embed_s": round(embed_s, 1),
+    out = {"passages": total, "load_s": round(load_s, 1), "embed_s": round(embed_s, 1),
             "passages_per_s": round(total / load_s, 1), "hnsw_build_s": round(index_s, 1)}
+    if cache_state:
+        out["embed_cache"] = cache_state
+    return out
 
 
 def sizes(store) -> dict:
@@ -174,6 +206,7 @@ def main():
     parser.add_argument("--ef-search", type=int, default=200)
     parser.add_argument("--ann-sample", type=int, default=100, help="queries for HNSW vs exact")
     parser.add_argument("--maintenance-mem", default="1GB")
+    parser.add_argument("--embed-cache", help="folder for cached passage vectors (.npy)")
     parser.add_argument("--output-dir", default="experiments")
     parser.add_argument("--sparse-weights", default="1.0",
                         help="hybrid BM25 weights to sweep, e.g. 1.0,0.5,0.3")
@@ -204,7 +237,8 @@ def main():
     report = {"dataset": args.dataset, "split": args.split, "queries": len(queries),
               "ef_search": args.ef_search,
               "timestamp": datetime.now().isoformat(), "configs": {}}
-    report["ingest"] = ingest(store, embedder, folder, args.batch, args.maintenance_mem)
+    report["ingest"] = ingest(store, embedder, folder, args.batch, args.maintenance_mem,
+                            args.embed_cache)
     report["sizes"] = sizes(store)
     store.conn.execute(sql.SQL("SET hnsw.ef_search = {}").format(sql.Literal(args.ef_search)))
     store.conn.commit()

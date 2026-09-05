@@ -94,3 +94,33 @@ def test_benchmark_end_to_end(tiny_beir, db_url, fake_models, monkeypatch, capsy
         with psycopg.connect(admin, autocommit=True) as conn:
             conn.execute(sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)")
                          .format(sql.Identifier("beir_tiny_test")))
+
+
+@pytest.mark.db
+def test_embed_cache_skips_embedding_on_reload(tiny_beir, db_url, fake_models, monkeypatch):
+    from scripts import beir_benchmark
+
+    monkeypatch.setenv("DATABASE_URL", db_url)
+    cache, out = tiny_beir / "cache", tiny_beir / "out"
+    argv = ["beir_benchmark", "--dataset", "tiny_test", "--data-dir", str(tiny_beir / "beir"),
+            "--output-dir", str(out), "--configs", "dense,bm25", "--embed-cache", str(cache)]
+    admin = psycopg.conninfo.make_conninfo(db_url, dbname="postgres")
+
+    def drop():
+        with psycopg.connect(admin, autocommit=True) as conn:
+            conn.execute(sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)")
+                         .format(sql.Identifier("beir_tiny_test")))
+    try:
+        monkeypatch.setattr(sys, "argv", argv)
+        beir_benchmark.main()
+        first = json.loads(next(out.glob("*.json")).read_text())
+        assert first["ingest"]["embed_cache"] == "saved" and list(cache.glob("*.npy"))
+        drop()                                                # fresh database, as in CI
+        for f in out.glob("*.json"):
+            f.unlink()
+        beir_benchmark.main()
+        second = json.loads(next(out.glob("*.json")).read_text())
+        assert second["ingest"]["embed_cache"] == "hit"
+        assert second["configs"]["dense"]["ndcg@10"] == first["configs"]["dense"]["ndcg@10"]
+    finally:
+        drop()
