@@ -45,7 +45,6 @@ jobs:
 
       - name: Run tests
         run: python -m pytest -q -rs
-
   quality:
     name: Retrieval quality gate (BEIR SciFact)
     needs: tests
@@ -64,6 +63,8 @@ jobs:
           --health-interval 5s --health-timeout 5s --health-retries 12
     env:
       DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+      RERANK_CANDIDATES: "16"        # same as the app's
+      RERANK_MAX_LENGTH: "256"
     steps:
       - uses: actions/checkout@v4
 

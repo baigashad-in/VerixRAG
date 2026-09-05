@@ -3,8 +3,6 @@
   "tolerance": 0.005,
   "match": {
     "queries": 300,
-    "rerank_defaults.candidates": 16,
-    "rerank_defaults.max_length": 256,
     "bm25_params.k1": 1.2,
     "bm25_params.b": 0.75
   },
