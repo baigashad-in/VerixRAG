@@ -104,6 +104,8 @@ def fake_models(monkeypatch):
 def db_url():
     url = os.getenv("TEST_DATABASE_URL")
     if not url:
+        if os.getenv("REQUIRE_DB_TESTS"):            # CI: a skipped database test is a failure
+            pytest.fail("REQUIRE_DB_TESTS is set but TEST_DATABASE_URL is not")
         pytest.skip("TEST_DATABASE_URL not set (needs Postgres with pgvector)")
     # These tests DROP the chunks and documents tables. Refuse to touch a
     # database that isn't clearly a test one, e.g. the real ragdb.
