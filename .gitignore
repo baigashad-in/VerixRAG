@@ -53,3 +53,5 @@ htmlcov/
 documents/*
 !documents/.gitkeep
 /*.json
+
+notebooks/
