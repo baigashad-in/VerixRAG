@@ -98,7 +98,7 @@ def embed_cache_path(cache_dir: str | None, folder: Path, model_name: str) -> Pa
 
 
 def ingest(store, embedder, folder: Path, batch: int, maintenance_mem: str,
-             embed_cache: str | None = None) -> dict:
+             embed_cache: str | None = None, maintenance_workers: int | None = None) -> dict:
     """Bulk-load the corpus (COPY, index built afterwards). Skips if already loaded.
 
     With embed_cache, passage vectors are read from (or saved to) a .npy file,
@@ -154,6 +154,9 @@ def ingest(store, embedder, folder: Path, batch: int, maintenance_mem: str,
     i0 = time.perf_counter()
     with store.conn.cursor() as cur:
         cur.execute(sql.SQL("SET maintenance_work_mem = {}").format(sql.Literal(maintenance_mem)))
+        if maintenance_workers is not None:
+            cur.execute(sql.SQL("SET max_parallel_maintenance_workers = {}").format(
+                sql.Literal(maintenance_workers)))
         cur.execute("""CREATE INDEX chunks_embeddings_idx ON chunks
                        USING hnsw (embedding vector_cosine_ops) WITH (m = 16, ef_construction = 64)""")
         index_s = time.perf_counter() - i0
@@ -161,7 +164,8 @@ def ingest(store, embedder, folder: Path, batch: int, maintenance_mem: str,
         cur.execute("ANALYZE chunks")
     store.conn.commit()
     out = {"passages": total, "load_s": round(load_s, 1), "embed_s": round(embed_s, 1),
-            "passages_per_s": round(total / load_s, 1), "hnsw_build_s": round(index_s, 1)}
+           "passages_per_s": round(total / load_s, 1), "hnsw_build_s": round(index_s, 1),
+           "maintenance_mem": maintenance_mem, "maintenance_workers": maintenance_workers}
     if cache_state:
         out["embed_cache"] = cache_state
     return out
@@ -206,6 +210,8 @@ def main():
     parser.add_argument("--ef-search", type=int, default=200)
     parser.add_argument("--ann-sample", type=int, default=100, help="queries for HNSW vs exact")
     parser.add_argument("--maintenance-mem", default="1GB")
+    parser.add_argument("--maintenance-workers", type=int,
+                        help="parallel workers for the HNSW build (default: server setting)")
     parser.add_argument("--embed-cache", help="folder for cached passage vectors (.npy)")
     parser.add_argument("--output-dir", default="experiments")
     parser.add_argument("--sparse-weights", default="1.0",
@@ -238,7 +244,7 @@ def main():
               "ef_search": args.ef_search,
               "timestamp": datetime.now().isoformat(), "configs": {}}
     report["ingest"] = ingest(store, embedder, folder, args.batch, args.maintenance_mem,
-                            args.embed_cache)
+                            args.embed_cache, args.maintenance_workers)
     report["sizes"] = sizes(store)
     store.conn.execute(sql.SQL("SET hnsw.ef_search = {}").format(sql.Literal(args.ef_search)))
     store.conn.commit()

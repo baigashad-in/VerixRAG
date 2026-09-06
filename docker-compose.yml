@@ -3,7 +3,7 @@
 services:
   db:
     image: pgvector/pgvector:pg16
-    shm_size: 1gb            # parallel HNSW builds need more than Docker's 64 MB default
+    shm_size: 8gb            # parallel HNSW build keeps the graph in shared memory (NQ needs ~6 GB)
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}

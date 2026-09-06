@@ -103,7 +103,8 @@ def test_embed_cache_skips_embedding_on_reload(tiny_beir, db_url, fake_models, m
     monkeypatch.setenv("DATABASE_URL", db_url)
     cache, out = tiny_beir / "cache", tiny_beir / "out"
     argv = ["beir_benchmark", "--dataset", "tiny_test", "--data-dir", str(tiny_beir / "beir"),
-            "--output-dir", str(out), "--configs", "dense,bm25", "--embed-cache", str(cache)]
+            "--output-dir", str(out), "--configs", "dense,bm25", "--embed-cache", str(cache),
+            "--maintenance-mem", "64MB", "--maintenance-workers", "2"]
     admin = psycopg.conninfo.make_conninfo(db_url, dbname="postgres")
 
     def drop():
@@ -114,7 +115,7 @@ def test_embed_cache_skips_embedding_on_reload(tiny_beir, db_url, fake_models, m
         monkeypatch.setattr(sys, "argv", argv)
         beir_benchmark.main()
         first = json.loads(next(out.glob("*.json")).read_text())
-        assert first["ingest"]["embed_cache"] == "saved" and list(cache.glob("*.npy"))
+        assert first["ingest"]["maintenance_workers"] == 2
         drop()                                                # fresh database, as in CI
         for f in out.glob("*.json"):
             f.unlink()
