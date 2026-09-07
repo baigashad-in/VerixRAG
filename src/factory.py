@@ -29,9 +29,12 @@ def build_retrieval_stack(with_reranker: bool = True) -> dict:
     with measure("connect_vector_store", perf):
         store = VectorStore(connection_string=os.getenv("DATABASE_URL"),
                             embedding_dimension=embedder.dimension)
+    from src.config import get_settings
     bm25 = BM25Retriever()
     with measure("build_bm25_index", perf) as m:
-        m["chunks"] = bm25.load_from_vector_store(store)
+        m["chunks"] = bm25.load_from_vector_store(
+            store, cache_dir=get_settings().bm25_cache_dir or None)
+        m["source"] = bm25.load_source
 
     reranker = None
     if with_reranker:

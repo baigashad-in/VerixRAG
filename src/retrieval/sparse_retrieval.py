@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import json
+import os
 import re
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 from src.ingestion.metadata import index_text
@@ -19,6 +22,9 @@ a an and are as at be but by for if in into is it no not of on or such that the 
 then there these they this to was will with
 """.split())
 _DROP = STOPWORDS | frozenset("bcdefghijklmnopqrstuvwxyz")     # plus single letters
+
+CACHE_FORMAT = 1                       # bump when the saved index layout or tokenizer changes
+_ARRAYS = ("indptr", "doc_idx", "weights", "chunk_ids")
 
 _WORD = re.compile(r"[^\W_]+")
 _COMPOUND = re.compile(r"[^\W_]+(?:[-_][^\W_]+)+")
@@ -55,6 +61,7 @@ class BM25Retriever:
         self._stemmer = Stemmer.Stemmer("english") if (stem and Stemmer) else None
         self._index: _Index | None = None
         self.documents: list = []
+        self.load_source: str | None = None    # "built" or "cache" after load_from_vector_store
 
     @property
     def bm25(self) -> _Index | None:
@@ -82,15 +89,26 @@ class BM25Retriever:
         self.documents = self._index.documents
         print(f"BM25 index built: {len(chunks)} documents")
 
-    def load_from_vector_store(self, vector_store, batch_size: int = 5000) -> int:
-        """Stream every chunk from the store; hits are fetched from the store at query time."""
+    def load_from_vector_store(self, vector_store, batch_size: int = 5000,
+                               cache_dir: str | None = None) -> int:
+        """Stream every chunk from the store; hits are fetched from the store at query time.
+
+        With cache_dir, a saved index is reused while the chunks and BM25 settings
+        are unchanged; otherwise the index is rebuilt and saved there.
+        """
+        signature = self._signature(vector_store) if cache_dir else None
+        if signature and self._load_cache(Path(cache_dir), signature, vector_store):
+            self.load_source = "cache"
+            print(f"BM25 index loaded from cache: {self._index.num_docs} documents")
+            return self._index.num_docs
         builder, ids = _Builder(self), []
         with vector_store.conn.cursor(name="bm25_load") as cur:
             cur.execute("SELECT id, content, metadata->>'context' FROM chunks ORDER BY id")
             while rows := cur.fetchmany(batch_size):
-                  ids.extend(r[0] for r in rows)
-                  builder.add([index_text(r[1], {"context": r[2]}) for r in rows])
+                ids.extend(r[0] for r in rows)
+                builder.add([index_text(r[1], {"context": r[2]}) for r in rows])
         vector_store.conn.commit()
+        self.load_source = "built"
         if not ids:
             self._index, self.documents = None, []
             return 0
@@ -98,7 +116,70 @@ class BM25Retriever:
                                     store=vector_store)
         self.documents = []
         print(f"BM25 index built: {len(ids)} documents")
+        if signature:
+            self._save_cache(Path(cache_dir), signature)
         return len(ids)
+
+    def _signature(self, store) -> dict:
+        """What the saved index depends on: database, table, chunk ids and BM25 settings.
+
+        The table oid and file node change on DROP/CREATE and TRUNCATE, so a table
+        refilled with reused ids is not mistaken for the saved one.
+        """
+        with store.read_cursor() as cur:
+            cur.execute("""SELECT COUNT(*), COALESCE(MAX(id), 0), COALESCE(SUM(id), 0),
+                                  'chunks'::regclass::oid::bigint, pg_relation_filenode('chunks')
+                           FROM chunks""")
+            count, max_id, id_sum, oid, filenode = cur.fetchone()
+        return {"format": CACHE_FORMAT, "database": store.conn.info.dbname,
+                "table": f"{oid}:{filenode}", "count": int(count), "max_id": int(max_id),
+                "id_sum": int(id_sum), "k1": self.k1, "b": self.b,
+                "stem": self._stemmer is not None}
+
+    def _save_cache(self, cache_dir: Path, signature: dict):
+        """Write the index; meta.json is written last, so a partial save is never loaded."""
+        idx, folder = self._index, cache_dir / signature["database"]
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / "meta.json").unlink(missing_ok=True)
+        files = {f"{name}.npy": getattr(idx, name) for name in _ARRAYS}
+        for fname, array in files.items():
+            tmp = folder / f"{fname}.tmp"
+            with open(tmp, "wb") as f:
+                np.save(f, array)
+            os.replace(tmp, folder / fname)
+        terms = sorted(idx.vocab, key=idx.vocab.__getitem__)       # position = term id
+        (folder / "vocab.txt.tmp").write_text("\n".join(terms), encoding="utf-8")
+        os.replace(folder / "vocab.txt.tmp", folder / "vocab.txt")
+        meta = {"signature": signature, "num_docs": idx.num_docs, "num_terms": len(terms)}
+        (folder / "meta.json.tmp").write_text(json.dumps(meta))
+        os.replace(folder / "meta.json.tmp", folder / "meta.json")
+
+    def _load_cache(self, cache_dir: Path, signature: dict, store) -> bool:
+        """Load a saved index if it matches signature; False means rebuild."""
+        folder = cache_dir / signature["database"]
+        try:
+            meta = json.loads((folder / "meta.json").read_text())
+            if meta["signature"] != signature:
+                print("BM25 cache is stale; rebuilding")
+                return False
+            arrays = {name: np.load(folder / f"{name}.npy") for name in _ARRAYS}
+            text = (folder / "vocab.txt").read_text(encoding="utf-8")
+        except (OSError, ValueError, KeyError, EOFError) as exc:
+            if not isinstance(exc, FileNotFoundError):
+                print(f"BM25 cache unreadable ({exc}); rebuilding")
+            return False
+        terms = text.split("\n") if text else []
+        n_terms, n_docs = meta["num_terms"], meta["num_docs"]
+        postings = int(arrays["indptr"][-1]) if len(arrays["indptr"]) else -1
+        if (len(terms) != n_terms or len(arrays["indptr"]) != n_terms + 1
+                or len(arrays["chunk_ids"]) != n_docs
+                or not len(arrays["doc_idx"]) == len(arrays["weights"]) == postings):
+            print("BM25 cache is inconsistent; rebuilding")
+            return False
+        self._index = _Index(vocab=dict(zip(terms, range(n_terms))), num_docs=n_docs,
+                             documents=None, store=store, **arrays)
+        self.documents = []
+        return True
 
     def search(self, query: str, top_k: int = 5) -> list[SparseResult]:
         """Return up to top_k chunks with a positive BM25 score, best first."""

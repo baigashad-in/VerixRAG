@@ -64,7 +64,7 @@ def test_benchmark_end_to_end(tiny_beir, db_url, fake_models, monkeypatch, capsy
     argv = ["beir_benchmark", "--dataset", "tiny_test", "--data-dir", str(tiny_beir / "beir"),
             "--output-dir", str(out), "--batch", "2", "--sparse-weights", "1.0,0.5",
             "--rerank-weights", "1.0,0.3", "--rerank-candidates", "4",
-            "--rerank-max-lengths", "8"]
+            "--rerank-max-lengths", "8", "--bm25-cache", str(tiny_beir / "bm25")]
     admin = psycopg.conninfo.make_conninfo(db_url, dbname="postgres")
     try:
         monkeypatch.setattr(sys, "argv", argv)
@@ -83,12 +83,15 @@ def test_benchmark_end_to_end(tiny_beir, db_url, fake_models, monkeypatch, capsy
         assert first["rerank_defaults"] == {"candidates": 40, "max_length": 512}
         assert first["ann_recall@10"] == pytest.approx(1.0)
         assert first["sizes"]["hnsw_index_mb"] > 0
+        assert first["bm25_build"]["source"] == "built"
 
         for f in out.glob("*.json"):
             f.unlink()
         beir_benchmark.main()                                  # second run reuses the load
         second = json.loads(next(out.glob("*.json")).read_text())
         assert second["ingest"]["skipped"] is True
+        assert second["bm25_build"]["source"] == "cache"             # saved index reused
+        assert second["configs"]["bm25"]["ndcg@10"] == first["configs"]["bm25"]["ndcg@10"]
         assert "Corpus already loaded" in capsys.readouterr().out
     finally:
         with psycopg.connect(admin, autocommit=True) as conn:

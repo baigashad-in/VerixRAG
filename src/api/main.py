@@ -123,9 +123,12 @@ async def lifespan(app: FastAPI):
         )
 
     # Retrieval
+    from src.config import get_settings
     bm25 = BM25Retriever()
     with measure("build_bm25_index", startup_perf) as m:
-        m["chunks"] = bm25.load_from_vector_store(store)
+        m["chunks"] = bm25.load_from_vector_store(
+            store, cache_dir=get_settings().bm25_cache_dir or None)
+        m["source"] = bm25.load_source
 
     with measure("load_reranker", startup_perf):
         reranker = CrossEncoderReranker(
@@ -410,7 +413,9 @@ def ingest(request: IngestRequest, api_key: str = Security(verify_api_key)):
     # Rebuild BM25 index after new ingestion
     bm25 = app_state.get("bm25")
     if bm25:
-        bm25.load_from_vector_store(app_state["store"])
+        from src.config import get_settings
+        bm25.load_from_vector_store(app_state["store"],
+                                    cache_dir=get_settings().bm25_cache_dir or None)
 
     _after_ingest()
 

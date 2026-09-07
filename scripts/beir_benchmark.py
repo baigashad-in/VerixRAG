@@ -224,6 +224,7 @@ def main():
                         help="reranker token limits to sweep, e.g. 512,256,128 (default: setting)")
     parser.add_argument("--bm25-k1", type=float, default=1.2)
     parser.add_argument("--bm25-b", type=float, default=0.75)
+    parser.add_argument("--bm25-cache", help="folder for the saved BM25 index (reused while unchanged)")
     args = parser.parse_args()
 
     configs = [c.strip() for c in args.configs.split(",") if c.strip()]
@@ -253,9 +254,10 @@ def main():
     if {"bm25", "hybrid", "rerank"} & set(configs):
         b0, rss0 = time.perf_counter(), rss_mb()
         bm25 = BM25Retriever(k1=args.bm25_k1, b=args.bm25_b)
-        bm25.load_from_vector_store(store)
+        bm25.load_from_vector_store(store, cache_dir=args.bm25_cache)
         report["bm25_build"] = {"s": round(time.perf_counter() - b0, 1),
-                                "rss_growth_mb": round(rss_mb() - rss0, 1)}
+                                "rss_growth_mb": round(rss_mb() - rss0, 1),
+                                "source": bm25.load_source}
     reranker = None
     if "rerank" in configs:
         from src.retrieval.reranker import CrossEncoderReranker

@@ -52,6 +52,7 @@ class Settings:
     
     # -- Hybrid retrieval --
     hybrid_sparse_weight: float        # BM25 weight in RRF fusion (dense weight is 1.0)
+    bm25_cache_dir: str                # folder for the saved BM25 index ('' = rebuild on start)
     rerank_candidates: int             # hybrid results the reranker scores (0 = 4 x top_k)
     rerank_max_length: int             # tokens per query+passage pair (0 = model default)
     rerank_chunk_floor: float | None   # drop chunks scoring below this (None = off)
@@ -96,6 +97,7 @@ def get_settings() -> Settings:
             domain_min_margin=_float("DOMAIN_MIN_MARGIN", 0.05),
             domains_config=os.getenv("DOMAINS_CONFIG", "config/domains.json"),
             hybrid_sparse_weight=_float("HYBRID_SPARSE_WEIGHT", 1.0),
+            bm25_cache_dir=os.getenv("BM25_CACHE_DIR", "").strip(),
             rerank_candidates=_int("RERANK_CANDIDATES", 0),
             rerank_max_length=_int("RERANK_MAX_LENGTH", 0),
             rerank_chunk_floor=_float_or_none("RERANK_CHUNK_FLOOR", ""),
