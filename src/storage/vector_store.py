@@ -16,6 +16,7 @@ import time
 import threading
 from contextlib import contextmanager
 import psycopg
+from psycopg import sql
 from psycopg.pq import TransactionStatus
 
 class VectorStore:
@@ -28,7 +29,8 @@ class VectorStore:
     # Content size limit per chunk — prevents storing huge blobs
     MAX_CHUNK_CONTENT = 100_000 # 100k chars - adjust based on needs and embedding model limits
 
-    def __init__(self, connection_string: str, embedding_dimension: int =384):
+    def __init__(self, connection_string: str, embedding_dimension: int =384,
+                ef_search: int | None = None):
         """
         Args:
             connection_string: PostgreSQL connection string e.g. "postgresql://user:pass@localhost:5432/ragdb"
@@ -36,7 +38,15 @@ class VectorStore:
             all-MiniLM-L6-v2 = 384
             BGE-M3 = 1024
             OpenAI text-embedding-3-small = 1536
+            ef_search: HNSW candidates per search on every connection
+                (None = HNSW_EF_SEARCH setting; 0 = pgvector default, 40)
         """
+        if ef_search is None:
+            from src.config import get_settings
+            ef_search = get_settings().hnsw_ef_search
+        if not isinstance(ef_search, int) or not (0 <= ef_search <= 1000):
+            raise ValueError("ef_search must be between 0 and 1000")
+        self.ef_search = ef_search
         self._dsn = connection_string
         self._local = threading.local()          # one connection per thread
         self._connections: list = []
@@ -51,6 +61,10 @@ class VectorStore:
         conn = getattr(self._local, "conn", None)
         if conn is None or conn.closed:
             conn = psycopg.connect(self._dsn)
+            if self.ef_search:
+                conn.execute(sql.SQL("SET hnsw.ef_search = {}").format(
+                    sql.Literal(self.ef_search)))
+                conn.commit()
             self._local.conn = conn
             with self._connections_lock:
                 self._connections.append(conn)
