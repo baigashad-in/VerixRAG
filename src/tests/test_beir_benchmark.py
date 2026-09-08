@@ -128,3 +128,43 @@ def test_embed_cache_skips_embedding_on_reload(tiny_beir, db_url, fake_models, m
         assert second["configs"]["dense"]["ndcg@10"] == first["configs"]["dense"]["ndcg@10"]
     finally:
         drop()
+
+
+@pytest.mark.db
+def test_ef_sweep_runs_dense_once_per_value(tiny_beir, db_url, fake_models, monkeypatch):
+    from scripts import beir_benchmark
+
+    monkeypatch.setenv("DATABASE_URL", db_url)
+    out = tiny_beir / "out"
+    argv = ["beir_benchmark", "--dataset", "tiny_test", "--data-dir", str(tiny_beir / "beir"),
+            "--output-dir", str(out), "--configs", "dense", "--ef-sweep", "10,200"]
+    seen = []
+    real_set = beir_benchmark.set_ef_search
+    monkeypatch.setattr(beir_benchmark, "set_ef_search",
+                        lambda store, value: (seen.append(value), real_set(store, value)))
+    admin = psycopg.conninfo.make_conninfo(db_url, dbname="postgres")
+    try:
+        monkeypatch.setattr(sys, "argv", argv)
+        beir_benchmark.main()
+        report = json.loads(next(out.glob("*.json")).read_text())
+        assert list(report["configs"]) == ["dense", "dense ef10", "dense ef200"]
+        low, high = report["configs"]["dense ef10"], report["configs"]["dense ef200"]
+        assert (low["ef_search"], high["ef_search"]) == (10, 200)
+        assert low["ann_recall@10"] == high["ann_recall@10"] == pytest.approx(1.0)
+        assert low["ndcg@10"] == pytest.approx(1.0) and low["latency_ms"]["n"] == 3
+        assert low["recall@100"] is None                 # ef_search < 100 caps the depth
+        assert high["recall@100"] is not None
+        assert seen[:3] == [200, 200, 10] and seen[-1] == 200   # default restored at the end
+    finally:
+        with psycopg.connect(admin, autocommit=True) as conn:
+            conn.execute(sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)")
+                         .format(sql.Identifier("beir_tiny_test")))
+
+
+def test_ef_sweep_needs_dense(monkeypatch):
+    from scripts import beir_benchmark
+
+    monkeypatch.setattr(sys, "argv", ["beir_benchmark", "--dataset", "x", "--configs", "bm25",
+                                      "--ef-sweep", "40"])
+    with pytest.raises(SystemExit):
+        beir_benchmark.main()

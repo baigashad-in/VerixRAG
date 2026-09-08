@@ -8,7 +8,8 @@ Usage:
     python -m scripts.beir_benchmark --dataset fiqa
     python -m scripts.beir_benchmark --dataset trec-covid --max-queries 200
     python -m scripts.beir_benchmark --dataset nq --configs dense --max-queries 500
-"""
+    python -m scripts.beir_benchmark --dataset nq --configs dense --ef-sweep 40,100,200
+    """
 
 import argparse
 import csv
@@ -190,6 +191,10 @@ class PrecomputedEmbedder:
     def embed_text(self, text: str) -> list[float]:
         return self.vectors.get(text) or self.fallback.embed_text(text)
 
+def set_ef_search(store, value: int):
+    """Set the HNSW candidate list size for this session's searches."""
+    store.conn.execute(sql.SQL("SET hnsw.ef_search = {}").format(sql.Literal(value)))
+    store.conn.commit()
 
 def doc_ids(results) -> list[str]:
     ids = []
@@ -209,6 +214,9 @@ def main():
     parser.add_argument("--batch", type=int, default=2000, help="passages per embed/COPY block")
     parser.add_argument("--ef-search", type=int, default=200)
     parser.add_argument("--ann-sample", type=int, default=100, help="queries for HNSW vs exact")
+    parser.add_argument("--ef-sweep", default="",
+                        help="extra dense runs at these ef_search values, e.g. 40,100,200 "
+                             "(run after the main configs, so the first dense run warms the cache)")
     parser.add_argument("--maintenance-mem", default="1GB")
     parser.add_argument("--maintenance-workers", type=int,
                         help="parallel workers for the HNSW build (default: server setting)")
@@ -230,7 +238,11 @@ def main():
     configs = [c.strip() for c in args.configs.split(",") if c.strip()]
     if set(configs) - set(ALL_CONFIGS):
         parser.error(f"configs must be from {ALL_CONFIGS}")
-
+    ef_sweep = [int(v) for v in args.ef_sweep.split(",") if v.strip()]
+    if ef_sweep and "dense" not in configs:
+        parser.error("--ef-sweep needs the dense config")
+    if any(v < 1 for v in ef_sweep):
+        parser.error("--ef-sweep values must be positive")
     from src.ingestion.embedding_service import EmbeddingService
     from src.retrieval.retrieval_engine import RetrievalEngine
     from src.retrieval.sparse_retrieval import BM25Retriever
@@ -247,8 +259,7 @@ def main():
     report["ingest"] = ingest(store, embedder, folder, args.batch, args.maintenance_mem,
                             args.embed_cache, args.maintenance_workers)
     report["sizes"] = sizes(store)
-    store.conn.execute(sql.SQL("SET hnsw.ef_search = {}").format(sql.Literal(args.ef_search)))
-    store.conn.commit()
+    set_ef_search(store, args.ef_search)
 
     bm25 = None
     if {"bm25", "hybrid", "rerank"} & set(configs):
@@ -285,7 +296,7 @@ def main():
         return [cast(v) for v in raw.split(",") if v.strip()] or [None]
 
     sweeps = {"hybrid": args.sparse_weights, "rerank": args.rerank_weights}
-    runs = []                                   # (label, runner, weight, candidates, max length)
+    runs = []                                   # (label, runner, weight, candidates, max length, ef_search)
     for name in configs:
         weights = values(sweeps.get(name, "1.0"), float)
         extra = ([(c, n) for c in values(args.rerank_candidates, int)
@@ -295,13 +306,15 @@ def main():
             for c, n in extra:
                 label = name + ("" if w == 1.0 else f"@{w:g}") + \
                         ("" if c is None else f" c{c}") + ("" if n is None else f" len{n}")
-                runs.append((label, runners[name], w, c, n))
+                runs.append((label, runners[name], w, c, n, None))
+    runs += [(f"dense ef{ef}", runners["dense"], 1.0, None, None, ef) for ef in ef_sweep]
     report["bm25_params"] = {"k1": args.bm25_k1, "b": args.bm25_b}
     base_candidates = engine.rerank_candidates
     base_length = reranker.max_length if reranker else None
     report["rerank_defaults"] = {"candidates": base_candidates or 4 * RERANK_TOP_K,
                                  "max_length": base_length}
-    for name, runner, weight, candidates, max_length in runs:
+    for name, runner, weight, candidates, max_length, ef in runs:
+        set_ef_search(store, ef or args.ef_search)
         engine.hybrid.sparse_weight = weight
         engine.rerank_candidates = base_candidates if candidates is None else candidates
         if reranker and (max_length or base_length):
@@ -316,10 +329,13 @@ def main():
             scores["ndcg@10"].append(ndcg_at_k(ranked, qrels[qid], 10))
             scores["recall@10"].append(recall_at_k(ranked, qrels[qid], 10))
             scores["mrr@10"].append(mrr_at_k(ranked, qrels[qid], 10))
-            if not name.startswith("rerank"):
+            if not name.startswith("rerank") and (ef or args.ef_search) >= DEPTH:
                 scores["recall@100"].append(recall_at_k(ranked, qrels[qid], 100))
         report["configs"][name] = {**{k: mean(v) for k, v in scores.items()},
                                    "latency_ms": latency_stats(times)}
+        if ef:
+            report["configs"][name]["ef_search"] = ef
+    set_ef_search(store, args.ef_search)
 
     # HNSW (approximate) vs exact search on a sample of queries
     sample = list(embeddings.items())[:args.ann_sample]
@@ -330,6 +346,12 @@ def main():
             store.conn.execute("SET LOCAL enable_indexscan = off")     # exact scan
             exact = [doc_ids(store.search(emb, top_k=10)) for _, emb in sample]
         report["ann_recall@10"] = mean([overlap_at_k(a, e, 10) for a, e in zip(approx, exact)])
+        for ef in ef_sweep:                                            # same exact results
+            set_ef_search(store, ef)
+            approx = [doc_ids(store.search(emb, top_k=10)) for _, emb in sample]
+            report["configs"][f"dense ef{ef}"]["ann_recall@10"] = mean(
+                [overlap_at_k(a, e, 10) for a, e in zip(approx, exact)])
+        set_ef_search(store, args.ef_search)
     report["memory_mb"] = {"rss": rss_mb(), "peak": peak_rss_mb()}
 
     print(f"\n{args.dataset}: {report['ingest']['passages']} passages, {len(queries)} queries")
@@ -343,6 +365,9 @@ def main():
         print(f"bm25 build {report['bm25_params']}: {report['bm25_build']}")
     if "ann_recall@10" in report:
         print(f"HNSW recall@10 vs exact search (ef_search={args.ef_search}): {report['ann_recall@10']}")
+        for ef in ef_sweep:
+            print(f"HNSW recall@10 vs exact search (ef_search={ef}): "
+                  f"{report['configs'][f'dense ef{ef}']['ann_recall@10']}")
     if "rerank_defaults" in report and reranker:
         print(f"rerank defaults: {report['rerank_defaults']}")
     print(f"query embedding (not in the latencies above): {report['query_embed_ms']}")
