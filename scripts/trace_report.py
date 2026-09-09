@@ -15,13 +15,29 @@ Usage:
 
 import argparse
 import json
-from collections import Counter, defaultdict
 from pathlib import Path
+from collections import Counter, defaultdict
+from datetime import datetime, timezone
 
 from src.observability.tracing import latency_stats
 
 
-def load(paths: list[str], since: str | None = None) -> list[dict]:
+def parse_time(value: str) -> datetime:
+    """ISO date/time as an aware datetime; no offset means UTC (trace times are UTC)."""
+    moment = datetime.fromisoformat(value)
+    return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
+
+
+def since_arg(value: str) -> datetime:
+    """argparse type for --since: rejects anything that is not an ISO date/time."""
+    try:
+        return parse_time(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"not an ISO date/time: {value!r} (example: 2026-11-12T20:48:37)") from None
+
+
+def load(paths: list[str], since: datetime | None = None) -> list[dict]:
     traces = []
     for p in paths:
         for path in (Path(p + ".1"), Path(p)):          # rotated file first (older)
@@ -34,8 +50,12 @@ def load(paths: list[str], since: str | None = None) -> list[dict]:
                     t = json.loads(line)
                 except json.JSONDecodeError:
                     continue                               # half-written last line
-                if since and t.get("started_at", "") < since:
-                    continue
+                if since:
+                    try:
+                        if parse_time(t.get("started_at", "")) < since:
+                            continue
+                    except ValueError:
+                        continue                           # no usable start time
                 traces.append(t)
     return traces
 
@@ -163,7 +183,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("paths", nargs="*", default=["experiments/traces.jsonl"])
-    parser.add_argument("--since", help="only traces started at or after this ISO time")
+    parser.add_argument("--since", type=since_arg,
+                        help="only traces started at or after this ISO time (UTC if no offset)")
     parser.add_argument("--slowest", type=int, default=5)
     parser.add_argument("--trace", help="print one trace in full")
     args = parser.parse_args()

@@ -149,8 +149,8 @@ def main(argv=None) -> int:
     path = out / f"load_test_{args.label}_{since[:19].replace(':', '-')}.json"
     path.write_text(json.dumps(report, indent=2))
     print(f"\nSaved: {path}")
-    print(f"Per-stage breakdown of these requests:\n"
-          f"  python -m scripts.trace_report --since {since}")
+    print(f"Per-stage breakdown of these requests (run on the host):\n"
+          f"  docker compose exec -T api python -m scripts.trace_report --since {since}")
     return 1 if report["fresh"]["errors"] or report["cached"]["errors"] else 0
 
 
