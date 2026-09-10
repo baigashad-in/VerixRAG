@@ -10,14 +10,15 @@ Usage:
     python -m scripts.trace_report
     python -m scripts.trace_report experiments/traces.jsonl --slowest 10
     python -m scripts.trace_report --since 2026-10-20T18:00   # only newer traces
+    python -m scripts.trace_report --since 2026-11-12T20:48 --until 2026-11-12T20:53
     python -m scripts.trace_report --trace cc8ad69a852548b8   # one request in full
 """
 
 import argparse
 import json
-from pathlib import Path
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
+from pathlib import Path
 
 from src.observability.tracing import latency_stats
 
@@ -37,7 +38,8 @@ def since_arg(value: str) -> datetime:
             f"not an ISO date/time: {value!r} (example: 2026-11-12T20:48:37)") from None
 
 
-def load(paths: list[str], since: datetime | None = None) -> list[dict]:
+def load(paths: list[str], since: datetime | None = None,
+         until: datetime | None = None) -> list[dict]:
     traces = []
     for p in paths:
         for path in (Path(p + ".1"), Path(p)):          # rotated file first (older)
@@ -50,12 +52,13 @@ def load(paths: list[str], since: datetime | None = None) -> list[dict]:
                     t = json.loads(line)
                 except json.JSONDecodeError:
                     continue                               # half-written last line
-                if since:
+                if since or until:
                     try:
-                        if parse_time(t.get("started_at", "")) < since:
-                            continue
+                        started = parse_time(t.get("started_at", ""))
                     except ValueError:
                         continue                           # no usable start time
+                    if (since and started < since) or (until and started >= until):
+                        continue
                 traces.append(t)
     return traces
 
@@ -185,11 +188,13 @@ def main():
     parser.add_argument("paths", nargs="*", default=["experiments/traces.jsonl"])
     parser.add_argument("--since", type=since_arg,
                         help="only traces started at or after this ISO time (UTC if no offset)")
+    parser.add_argument("--until", type=since_arg,
+                        help="only traces started before this ISO time (UTC if no offset)")
     parser.add_argument("--slowest", type=int, default=5)
     parser.add_argument("--trace", help="print one trace in full")
     args = parser.parse_args()
 
-    traces = load(args.paths, args.since)
+    traces = load(args.paths, args.since, args.until)
     if not traces:
         print("No traces found. Send a few /api/chat requests first.")
         return

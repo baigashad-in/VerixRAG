@@ -25,6 +25,14 @@ def test_since_keeps_only_newer_traces_in_any_iso_form(tmp_path, since):
     assert [t["trace_id"] for t in traces] == ["new"]
 
 
+def test_until_excludes_later_traces(tmp_path):
+    path = write_traces(tmp_path)
+    until = trace_report.since_arg("2026-11-12T20:48:37")
+    assert [t["trace_id"] for t in trace_report.load([path], until=until)] == ["old"]
+    since = trace_report.since_arg("2026-11-12T20:48:36")
+    assert trace_report.load([path], since, until)[0]["trace_id"] == "old"
+
+
 def test_without_since_everything_is_loaded(tmp_path):
     assert len(trace_report.load([write_traces(tmp_path)])) == 3
 

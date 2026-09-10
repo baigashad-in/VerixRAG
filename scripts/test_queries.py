@@ -54,113 +54,119 @@ queries = [
     "What is quantum computing?",
 ]
 
-results = []
-passed = 0
-failed = 0
-total_coverage = 0
-cited_count = 0
-uncited_count = 0
+def main():
+    """Send each query to the running API and print a citation summary."""
+    results = []
+    passed = 0
+    failed = 0
+    total_coverage = 0
+    cited_count = 0
+    uncited_count = 0
 
-print(f"Running {len(queries)} test queries...\n")
-print("=" * 70)
+    print(f"Running {len(queries)} test queries...\n")
+    print("=" * 70)
 
-for i, query in enumerate(queries):
-    print(f"\n[{i+1}/{len(queries)}] {query}")
+    for i, query in enumerate(queries):
+        print(f"\n[{i+1}/{len(queries)}] {query}")
 
-    try:
-        res = requests.post(
-            f"{API}/api/chat",
-            headers = headers,
-            json = {"query": query},
-            timeout = 30,
-        )
-        data = res.json()
-    except Exception as e:
-        print(f" ERROR: {e}")
-        failed += 1
-        continue
+        try:
+            res = requests.post(
+                f"{API}/api/chat",
+                headers = headers,
+                json = {"query": query},
+                timeout = 30,
+            )
+            data = res.json()
+        except Exception as e:
+            print(f" ERROR: {e}")
+            failed += 1
+            continue
 
-    answer = data.get("answer", "")
-    guardrails = data.get("guardrails", {})
-    hallucination = data.get("hallucination_check")
-    citations = data.get("citations", [])
-    classified = guardrails.get("classified_as", "unknown")
+        answer = data.get("answer", "")
+        guardrails = data.get("guardrails", {})
+        hallucination = data.get("hallucination_check")
+        citations = data.get("citations", [])
+        classified = guardrails.get("classified_as", "unknown")
 
-    # Check results
-    coverage = hallucination.get("citation_coverage", 0) if hallucination else None
-    is_suspicious = hallucination.get("is_suspicious", False) if hallucination else None
-    cited = hallucination.get("cited_claims", 0) if hallucination else 0
-    uncited = len(hallucination.get("uncited_claims", [])) if hallucination else 0
+        # Check results
+        coverage = hallucination.get("citation_coverage", 0) if hallucination else None
+        is_suspicious = hallucination.get("is_suspicious", False) if hallucination else None
+        cited = hallucination.get("cited_claims", 0) if hallucination else 0
+        uncited = len(hallucination.get("uncited_claims", [])) if hallucination else 0
 
-    print(f" Scope: {classified}")
-    print(f" Answer: {answer[:100]}...")
-    print(f" Citations: {len(citations)}")
+        print(f" Scope: {classified}")
+        print(f" Answer: {answer[:100]}...")
+        print(f" Citations: {len(citations)}")
 
-    if coverage is not None:
-        print(f" Coverage: {coverage:.0%}({cited} cited, {uncited} uncited)")
-        print(f" Suspicious: {is_suspicious}")
-        total_coverage += coverage
-        cited_count += cited
-        uncited_count += uncited
+        if coverage is not None:
+            print(f" Coverage: {coverage:.0%}({cited} cited, {uncited} uncited)")
+            print(f" Suspicious: {is_suspicious}")
+            total_coverage += coverage
+            cited_count += cited
+            uncited_count += uncited
 
-    if guardrails.get("input_pii_detected", 0) > 0:
-        print(f"PII: {guardrails['input_pii_detected']} detected")
+        if guardrails.get("input_pii_detected", 0) > 0:
+            print(f"PII: {guardrails['input_pii_detected']} detected")
 
-    results.append({
-        "query": query,
-        "classified_as": classified,
-        "citation_coverage": coverage,
-        "is_suspicious": is_suspicious,
-        "cited_claims": cited,
-        "uncited_claims": uncited,
-        "num_citations": len(citations),
-        "answer_length": len(answer),
-    })
+        results.append({
+            "query": query,
+            "classified_as": classified,
+            "citation_coverage": coverage,
+            "is_suspicious": is_suspicious,
+            "cited_claims": cited,
+            "uncited_claims": uncited,
+            "num_citations": len(citations),
+            "answer_length": len(answer),
+        })
 
-    passed += 1
-    time.sleep(2) # respect rate limits
+        passed += 1
+        time.sleep(2) # respect rate limits
 
-# Summary
-print("\n" + "=" * 70)
-print("RESULTS SUMMARY")
-print("=" * 70)
+    # Summary
+    print("\n" + "=" * 70)
+    print("RESULTS SUMMARY")
+    print("=" * 70)
 
-in_scope = [r for r in results if r["classified_as"] == "in_scope"]
-out_scope = [r for r in results if r["classified_as"] == "out_of_scope"]
+    in_scope = [r for r in results if r["classified_as"] == "in_scope"]
+    out_scope = [r for r in results if r["classified_as"] == "out_of_scope"]
 
-print(f"\nTotal Queries: {len(queries)}")
-print(f"Successful: {passed}")
-print(f"Failed: {failed}")
-print(f"In-scope: {len(in_scope)}")
-print(f"Out-of-scope: {len(out_scope)}")
+    print(f"\nTotal Queries: {len(queries)}")
+    print(f"Successful: {passed}")
+    print(f"Failed: {failed}")
+    print(f"In-scope: {len(in_scope)}")
+    print(f"Out-of-scope: {len(out_scope)}")
 
-if in_scope:
-    coverages = [r["citation_coverage"] for r in in_scope if r["citation_coverage"] is not None]
-    avg_coverage = sum(coverages) / len(coverages) if coverages else 0
-    suspicious_count = sum(1 for r in in_scope if r["is_suspicious"])
-    total_cited = sum(r["cited_claims"] for r in in_scope)
-    total_uncited = sum(r["uncited_claims"] for r in in_scope)
+    if in_scope:
+        coverages = [r["citation_coverage"] for r in in_scope if r["citation_coverage"] is not None]
+        avg_coverage = sum(coverages) / len(coverages) if coverages else 0
+        suspicious_count = sum(1 for r in in_scope if r["is_suspicious"])
+        total_cited = sum(r["cited_claims"] for r in in_scope)
+        total_uncited = sum(r["uncited_claims"] for r in in_scope)
 
-    print(f"\n--- In-Scope Metrics ---")
-    print(f"Avg citation coverage: {avg_coverage:.1%}")
-    print(f"Total cited claims:    {total_cited}")
-    print(f"Total uncited claims:  {total_uncited}")
-    print(f"Hallucination rate:    {total_uncited}/{total_cited + total_uncited} = {total_uncited/(total_cited + total_uncited):.1%}" if (total_cited + total_uncited) > 0 else "N/A")
-    print(f"Suspicious answers:    {suspicious_count}/{len(in_scope)}")
+        print(f"\n--- In-Scope Metrics ---")
+        print(f"Avg citation coverage: {avg_coverage:.1%}")
+        print(f"Total cited claims:    {total_cited}")
+        print(f"Total uncited claims:  {total_uncited}")
+        print(f"Hallucination rate:    {total_uncited}/{total_cited + total_uncited} = {total_uncited/(total_cited + total_uncited):.1%}" if (total_cited + total_uncited) > 0 else "N/A")
+        print(f"Suspicious answers:    {suspicious_count}/{len(in_scope)}")
 
-    # Per-query breakdown
-    print(f"\n--- Per Query ---")
-    for r in in_scope:
-        status = "✓" if not r["is_suspicious"] else "⚠"
-        cov = f"{r['citation_coverage']:.0%}" if r["citation_coverage"] is not None else "N/A"
-        print(f"{status} [{cov}] {r['query'][:55]}")
+        # Per-query breakdown
+        print(f"\n--- Per Query ---")
+        for r in in_scope:
+            status = "✓" if not r["is_suspicious"] else "⚠"
+            cov = f"{r['citation_coverage']:.0%}" if r["citation_coverage"] is not None else "N/A"
+            print(f"{status} [{cov}] {r['query'][:55]}")
 
-print(f"\n--- Out-of-Scope ---")
-for r in out_scope:
-    print(f"✓ Rejected: {r['query'][:55]}")
+    print(f"\n--- Out-of-Scope ---")
+    for r in out_scope:
+        print(f"✓ Rejected: {r['query'][:55]}")
 
-# Save full results
-with open("experiments/test_queries_results.json", "w") as f:
-    json.dump(results, f, indent = 2)
+    # Save full results
+    with open("experiments/test_queries_results.json", "w") as f:
+        json.dump(results, f, indent = 2)
 
-print(f"\nFull results saved to experiments/test_queries_results.json")
+    print(f"\nFull results saved to experiments/test_queries_results.json")
+
+
+if __name__ == "__main__":
+    main()
